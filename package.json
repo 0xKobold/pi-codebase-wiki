@@ -1,0 +1,32 @@
+{
+  "name": "@0xkobold/pi-codebase-wiki",
+  "version": "0.1.0",
+  "description": "Karpathy Wiki for codebases — auto-maintained knowledge base from git commits and code docs",
+  "keywords": ["pi-package"],
+  "main": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "files": ["src/", "skills/"],
+  "pi": {
+    "extensions": ["./src/index.ts"],
+    "skills": ["./skills/codebase-wiki/SKILL.md"]
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.62.0",
+    "@sinclair/typebox": ">=0.32.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "rm -rf dist && tsc",
+    "test": "bun test"
+  },
+  "license": "MIT"
+}
