@@ -16,6 +16,9 @@ import type { FileEntry } from "../shared.js";
 const DEFAULT_EXCLUDE = [
   "node_modules", "dist", ".git", "coverage", ".codebase-wiki",
   "__pycache__", ".next", ".nuxt", "build", ".cache", ".turbo",
+  ".0xkobold", ".pi", ".agents", ".cursor", ".claude",
+  ".vscode", ".idea", "tests", "test", "test-packages",
+  "deprecated", "dead-code-backup", "TEMPLATES", "templates",
 ];
 
 /**
@@ -86,6 +89,9 @@ export function inferModules(files: FileEntry[]): ModuleInfo[] {
     } else if (parts.length >= 2 && parts[0] === "src") {
       // src/core/store.ts → src/core
       moduleName = `src/${parts[1]}`;
+    } else if (parts.length >= 2 && parts[0]!.startsWith(".")) {
+      // Skip hidden directories like .git, .0xkobold, .next
+      continue;
     } else if (parts.length >= 2) {
       moduleName = parts[0]!;
     } else {
