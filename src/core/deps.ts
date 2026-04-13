@@ -159,30 +159,47 @@ export function resolveImportToSlug(importPath: string, sourceFile: string, proj
     return null;
   }
 
-  // Alias paths like @/src/core -> src-core
+  // Skip CSS/style imports
+  if (/\.(css|scss|less|svg|png|jpg)$/.test(importPath)) {
+    return null;
+  }
+
+  // Skip deep relative paths (../../foo) — too ambiguous
+  if (importPath.startsWith("../../") || importPath.startsWith("../..")) {
+    return null;
+  }
+
+  // Collapse relative prefixes to a clean path
   const aliased = importPath
     .replace(/^@\//, "src/")
     .replace(/^~\//, "src/")
     .replace(/^#\//, "")
-    .replace(/^\.\//, "")
-    .replace(/^\.\.\//, "");
+    .replace(/^(\.\.\/)+/, "")  // strip all leading ../
+    .replace(/^\.\//, "");
 
-  // If the import matches a known project module, return it
+  // If the import matches a known project module, return it directly
   for (const mod of projectModules) {
-    if (aliased.includes(mod) || importPath.includes(mod)) {
-      return mod.replace(/[/.]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    if (importPath.includes(mod) || aliased.includes(mod)) {
+      const slug = mod.replace(/[/.]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+      if (/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(slug)) return slug;
+      return null;
     }
   }
 
-  // If it's a relative path, derive from segments
+  // For relative or src/ imports, derive entity slug
   if (importPath.startsWith(".") || importPath.startsWith("src/") || importPath.startsWith("/")) {
-    const clean = importPath
-      .replace(/^\.\.?\//, "")
+    const clean = aliased
       .replace(/^src\//, "src-")
       .replace(/\//g, "-")
-      .replace(/\.(ts|tsx|js|jsx)$/, "")
-      .replace(/-+/g, "-");
-    return clean || null;
+      .replace(/\.(ts|tsx|js|jsx|mjs|cjs)$/, "")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .toLowerCase();
+
+    // Validate slug format — must start with a letter
+    if (clean.length === 0 || !/^[a-z]/.test(clean)) return null;
+    if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(clean)) return null;
+    return clean;
   }
 
   return null;

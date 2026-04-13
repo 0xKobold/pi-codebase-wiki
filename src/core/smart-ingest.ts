@@ -13,7 +13,7 @@ import * as path from "path";
 import type { WikiPage } from "../shared.js";
 import { toSlug, formatWikiDate } from "../shared.js";
 import type { WikiStore } from "./store.js";
-import { extractImports, extractExports, buildCrossReferences } from "./deps.js";
+import { extractImports, extractExports, buildCrossReferences, resolveImportToSlug } from "./deps.js";
 import type { DependencyInfo } from "./deps.js";
 
 // ============================================================================
@@ -86,10 +86,10 @@ export function enrichAllEntities(
       if (isEnriched(content)) continue;
 
       // Analyze source files for this entity
-      const analysis = analyzeEntityContent(page, rootDir);
+      const analysis = analyzeEntityContent(page, rootDir, allModules);
 
       // Generate enriched content
-      const enriched = generateEnrichedContent(page, analysis, crossRefs.get(page.id));
+      const enriched = generateEnrichedContent(page, analysis, crossRefs.get(page.id), allModules);
 
       // Write only if content actually changed
       if (enriched !== content) {
@@ -133,7 +133,7 @@ function isEnriched(content: string): boolean {
 /**
  * Analyze an entity's source files to extract content info
  */
-function analyzeEntityContent(page: WikiPage, rootDir: string): EntityContent {
+function analyzeEntityContent(page: WikiPage, rootDir: string, allModules: string[]): EntityContent {
   const responsibilities: string[] = [];
   const dependencies: string[] = [];
   const exports: string[] = [];
@@ -323,7 +323,8 @@ function analyzeEntityDeps(page: WikiPage, rootDir: string): DependencyInfo[] {
 function generateEnrichedContent(
   page: WikiPage,
   analysis: EntityContent,
-  outboundRefs?: Set<string>
+  outboundRefs?: Set<string>,
+  allModules: string[] = []
 ): string {
   const today = formatWikiDate(new Date());
 
@@ -351,8 +352,12 @@ function generateEnrichedContent(
   lines.push("", "## Dependencies");
   if (analysis.dependencies.length > 0) {
     for (const dep of analysis.dependencies) {
-      const slug = toSlug(dep);
-      lines.push(`- [[${slug}]] — ${dep}`);
+      const slug = resolveImportToSlug(dep, "", allModules);
+      if (slug) {
+        lines.push(`- [[${slug}]] — \`${dep}\``);
+      } else {
+        lines.push(`- \`${dep}\``);
+      }
     }
   } else {
     lines.push("- (no internal dependencies detected)");
@@ -360,9 +365,11 @@ function generateEnrichedContent(
 
   lines.push("", "## Dependents");
   if (outboundRefs && outboundRefs.size > 0) {
-    // Outbound refs from cross-references
+    // Outbound refs from cross-references — only link valid slugs
     for (const ref of outboundRefs) {
-      lines.push(`- Referenced by [[${ref}]]`);
+      if (/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(ref)) {
+        lines.push(`- Referenced by [[${ref}]]`);
+      }
     }
   } else {
     lines.push("- (to be discovered through cross-reference analysis)");

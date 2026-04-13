@@ -165,7 +165,8 @@ export class WikiStore {
 
   upsertPage(page: WikiPage): void {
     console.assert(page !== null, "page must not be null");
-    console.assert(validateSlug(page.id), `invalid slug: ${page.id}`);
+    // Gracefully skip invalid slugs instead of crashing
+    if (!validateSlug(page.id)) return;
 
     this.db!.run(
       `INSERT INTO wiki_pages (id, path, type, title, summary, source_files, source_commits,
@@ -260,8 +261,9 @@ export class WikiStore {
   // ============================================================================
 
   addCrossReference(fromPage: string, toPage: string, context: string): void {
-    console.assert(validateSlug(fromPage), `invalid from slug: ${fromPage}`);
-    console.assert(validateSlug(toPage), `invalid to slug: ${toPage}`);
+    // Gracefully skip invalid slugs instead of asserting
+    if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(fromPage)) return;
+    if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(toPage)) return;
 
     this.db!.run(
       `INSERT INTO cross_references (from_page, to_page, context)

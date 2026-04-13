@@ -95,7 +95,7 @@ export function inferModules(files: FileEntry[]): ModuleInfo[] {
     } else if (parts.length >= 2) {
       moduleName = parts[0]!;
     } else {
-      moduleName = "_root";
+      continue; // Skip root-level files with no clear module
     }
 
     const existing = moduleMap.get(moduleName) || [];
