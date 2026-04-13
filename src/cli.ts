@@ -5,7 +5,7 @@
  * Powered by kapy 🐹
  *
  * Usage:
- *   wiki init                        Initialize .codebase-wiki/
+ *   wiki wiki-init                  Initialize .codebase-wiki/
  *   wiki ingest [commits|tree|smart|llm|all]  Ingest sources
  *   wiki query "why did we..."       Search the wiki
  *   wiki lint                        Health check
@@ -52,16 +52,21 @@ import type { WikiConfig, GitCommit } from "./shared.js";
 
 const DEFAULT_CONFIG: WikiConfig = loadConfig();
 
-function getStore(rootDir: string): WikiStore | null {
+async function getStore(rootDir: string): Promise<WikiStore | null> {
   if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
-    console.error("❌ Wiki not initialized. Run `wiki init` first.");
+    console.error("❌ Wiki not initialized. Run `wiki wiki-init` first.");
     process.exit(1);
   }
   const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
   const dbPath = path.join(wikiPath, "meta", "wiki.db");
   const store = new WikiStore(dbPath);
-  store.init();
+  await store.init();
   return store;
+}
+
+function posArg(ctx: any, index: number, fallback?: string): string {
+  const rest = (ctx.args?.rest ?? []) as string[];
+  return rest[index] ?? fallback ?? "";
 }
 
 function closeStore(store: WikiStore | null): void {
@@ -73,8 +78,8 @@ function closeStore(store: WikiStore | null): void {
 // ============================================================================
 
 kapy()
-  // ─── init ────────────────────────────────────────────────────────────
-  .command("init", {
+  // ─── wiki-init ─────────────────────────────────────────────────────────
+  .command("wiki-init", {
     description: "Initialize the codebase wiki for the current project",
     args: [],
     flags: {
@@ -129,10 +134,10 @@ kapy()
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const source = (ctx.args.source as string) || "commits";
+    const source = posArg(ctx, 0, "commits");
     const since = (ctx.args.since as string) || "1 week ago";
 
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     const spinner = ctx.spinner(`Ingesting ${source}...`);
@@ -207,10 +212,10 @@ kapy()
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const question = ctx.args.question as string;
+    const question = posArg(ctx, 0);
     const limit = (ctx.args.limit as number) || 10;
 
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
@@ -261,7 +266,7 @@ kapy()
     flags: {},
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
@@ -293,7 +298,7 @@ kapy()
     flags: {},
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
@@ -350,12 +355,12 @@ kapy()
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const name = ctx.args.name as string;
+    const name = posArg(ctx, 0);
     const summary = ctx.args.summary as string;
     const type = (ctx.args.type as string) || "module";
     const files = ctx.args.files ? String(ctx.args.files).split(",").map(f => f.trim()) : [];
 
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
@@ -428,13 +433,13 @@ kapy()
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const title = ctx.args.title as string;
+    const title = posArg(ctx, 0);
     const context = ctx.args.context as string;
-    const decision = ctx.args.choice as string;
+    const decision = String(ctx.args.choice ?? ctx.args.d ?? "");
     const status = (ctx.args.status as string) || "Proposed";
     const alternatives = ctx.args.alternatives as string | undefined;
 
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
@@ -503,12 +508,12 @@ kapy()
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const name = ctx.args.name as string;
+    const name = posArg(ctx, 0);
     const summary = ctx.args.summary as string;
     const appliesTo = ctx.args.applies ? String(ctx.args.applies).split(",").map(s => s.trim()) : [];
     const details = ctx.args.details as string | undefined;
 
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
@@ -662,7 +667,7 @@ kapy()
     flags: {},
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const feature = ctx.args.feature as string;
+    const feature = posArg(ctx, 0);
     const allCommits = getAllCommits(rootDir);
     const slug = feature.toLowerCase().replace(/[^a-z0-9]/g, "-");
 
@@ -704,7 +709,7 @@ kapy()
       fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
       fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
 
-      const store = getStore(rootDir);
+      const store = await getStore(rootDir);
       if (store) {
         try {
           store.upsertPage({
@@ -742,7 +747,7 @@ kapy()
     flags: {},
   }, async (ctx) => {
     const rootDir = process.cwd();
-    const store = getStore(rootDir);
+    const store = await getStore(rootDir);
     if (!store) return;
 
     try {
