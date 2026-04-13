@@ -312,6 +312,16 @@ export class WikiStore {
     return this.getOutboundLinks(pageId);
   }
 
+  getAllCrossReferences(): CrossReference[] {
+    const result = this.db!.exec("SELECT * FROM cross_references");
+    if (result.length === 0) return [];
+    return result[0]!.values.map(row => ({
+      fromPage: row[0] as string,
+      toPage: row[1] as string,
+      context: row[2] as string,
+    }));
+  }
+
   // ============================================================================
   // INGEST LOG
   // ============================================================================

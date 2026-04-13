@@ -60,6 +60,9 @@ wiki changelog --since="2 weeks ago"
 # Trace feature evolution
 wiki evolve auth
 
+# Launch local web UI with graph visualization
+wiki serve --port=3000 --open
+
 # All commands support --json for machine-readable output
 wiki status --json
 wiki query "how does hot-reload work?" --json
@@ -137,6 +140,7 @@ wiki ingest all
 | `wiki changelog` | Generate changelog from recent commits |
 | `wiki evolve <feature>` | Trace feature evolution over time |
 | `wiki reindex` | Rebuild the wiki index |
+| `wiki serve` | Start local web UI with graph visualization |
 
 ## pi Tools
 
@@ -203,6 +207,24 @@ wiki ingest all
 ## Key Principle
 
 > **The LLM writes. You read.** You curate sources and ask questions. The LLM does the bookkeeping.
+
+## Web UI
+
+`wiki serve` launches a local web interface with:
+
+- **Page browser** — sidebar with all pages, type-coded dots (entity, concept, decision, etc.)
+- **Content viewer** — rendered markdown with clickable `[[wikilinks]]` and metadata
+- **Full-text search** — search across all pages with relevance scoring
+- **Interactive graph** — force-directed node graph showing how pages connect, drag nodes, zoom, double-click to navigate
+- **Dark mode** — because we live in terminals
+
+```bash
+wiki serve              # Start on port 3000
+wiki serve --port=8080 # Custom port
+wiki serve --open      # Auto-open browser
+```
+
+All data comes from the API (`/api/pages`, `/api/graph`, `/api/search`). The UI is a single HTML page — no build tools, no external deps.
 
 ## License
 

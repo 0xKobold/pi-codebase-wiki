@@ -759,4 +759,29 @@ kapy()
     }
   })
 
+  // ─── serve ───────────────────────────────────────────────────────────
+  .command("serve", {
+    description: "Start local web UI with page browser and graph visualization",
+    args: [],
+    flags: {
+      port: {
+        type: "number",
+        alias: "p",
+        description: "Port to serve on (default 3000)",
+        default: 3000,
+      },
+      open: {
+        type: "boolean",
+        alias: "o",
+        description: "Open browser automatically",
+        default: false,
+      },
+    },
+  }, async (ctx) => {
+    const { serveWiki } = await import("./web/server.js");
+    const port = (ctx.args.port as number) || 3000;
+    const shouldOpen = ctx.args.open as boolean;
+    await serveWiki(process.cwd(), DEFAULT_CONFIG, { port, open: shouldOpen });
+  })
+
   .run();
