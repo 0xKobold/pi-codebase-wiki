@@ -1,6 +1,6 @@
 # 📖 pi-codebase-wiki
 
-> **Karpathy Wiki for codebases.** Auto-maintained knowledge base from git commits and code documentation.
+> **Keeps a wiki for your code that updates itself** — reads your git history and docs so you can ask questions about your codebase.
 
 [![npm version](https://img.shields.io/npm/v/@0xkobold/pi-codebase-wiki)](https://www.npmjs.com/package/@0xkobold/pi-codebase-wiki)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

@@ -1,13 +1,13 @@
 ---
 name: codebase-wiki
-description: Auto-maintained codebase knowledge base (Karpathy Wiki for code). Use when the user asks about codebase documentation, architectural decisions, commit history, changelog generation, or maintaining a wiki for their project.
+description: Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase. Use when the user asks about codebase documentation, architectural decisions, commit history, changelog generation, or maintaining a wiki for their project.
 ---
 
 # Codebase Wiki Skill
 
 ## Overview
 
-pi-codebase-wiki implements the Karpathy Wiki pattern for software projects. Instead of RAG retrieval over raw code, it incrementally builds and maintains a structured markdown wiki from git commits and code documentation.
+pi-codebase-wiki keeps a wiki for your code that updates itself. Instead of re-deriving knowledge from scratch on every query, it reads your git history and docs to build a living, searchable wiki you can ask questions about.
 
 ## When to Use
 

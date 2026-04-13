@@ -1,6 +1,6 @@
 # pi-codebase-wiki — Specification
 
-> **Karpathy Wiki, but for code.** A pi extension that incrementally builds and maintains a structured, interlinked knowledge base from your codebase documentation and git commit history — compiled once, kept current, never re-derived.
+> **Keeps a wiki for your code that updates itself.** Reads your git history and docs so you can ask questions about your codebase — knowledge compiled once, kept current, never re-derived.
 
 ---
 

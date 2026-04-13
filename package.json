@@ -1,7 +1,7 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
   "version": "0.4.1",
-  "description": "Karpathy Wiki for codebases — auto-maintained knowledge base from git commits and code docs",
+  "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
   "keywords": ["pi-package"],
   "main": "./src/index.ts",
   "exports": {
