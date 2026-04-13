@@ -3,6 +3,8 @@
  *
  * Handles all git interactions: log parsing, diff analysis, blame, etc.
  * Pure functions, no globals, all validated inputs.
+ *
+ * Phase 2: Uses null-delimited format for robust commit parsing.
  */
 
 import { execSync } from "child_process";
@@ -10,27 +12,42 @@ import type { GitCommit } from "../shared.js";
 import { parseCommitMessage, isIngestibleCommit } from "../shared.js";
 import type { IngestConfig } from "../shared.js";
 
+// Null byte delimiter for robust git log parsing
+const COMMIT_DELIM = "\x00";
+const FIELD_DELIM = "\x01";
+
 // ============================================================================
 // GIT LOG PARSING
 // ============================================================================
 
 /**
  * Get recent commits with changed files
+ * Uses null-delimited format for robust parsing (Phase 2)
  */
 export function getRecentCommits(cwd: string, since: string = "1 week ago"): GitCommit[] {
   console.assert(typeof cwd === "string", "cwd must be string");
   console.assert(cwd.length > 0, "cwd must not be empty");
 
   try {
-    const format = "%H%n%an%n%ad%n%s%n%b%n---COMMIT_END---";
+    // Use null-delimited format: hash\x01author\x01date\x01subject\x01body\x00files-list
     const logOutput = execSync(
-      `git log --format="${format}" --name-only --since="${since}"`,
+      `git log --format="%H${FIELD_DELIM}%an${FIELD_DELIM}%aI${FIELD_DELIM}%s${FIELD_DELIM}%b" --name-only --since="${since}" -z`,
       { encoding: "utf-8", cwd, maxBuffer: 10 * 1024 * 1024 }
     );
 
-    return parseGitLog(logOutput);
+    return parseGitLogDelimited(logOutput);
   } catch {
-    return [];
+    // Fallback to legacy format
+    try {
+      const format = "%H%n%an%n%aI%n%s%n%b";
+      const logOutput = execSync(
+        `git log --format="${format}" --name-only --since="${since}"`,
+        { encoding: "utf-8", cwd, maxBuffer: 10 * 1024 * 1024 }
+      );
+      return parseGitLogLegacy(logOutput);
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -41,15 +58,23 @@ export function getAllCommits(cwd: string): GitCommit[] {
   console.assert(typeof cwd === "string", "cwd must be string");
 
   try {
-    const format = "%H%n%an%n%ad%n%s%n%b%n---COMMIT_END---";
     const logOutput = execSync(
-      `git log --format="${format}" --name-only`,
+      `git log --format="%H${FIELD_DELIM}%an${FIELD_DELIM}%aI${FIELD_DELIM}%s${FIELD_DELIM}%b" --name-only -z`,
       { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024 }
     );
 
-    return parseGitLog(logOutput);
+    return parseGitLogDelimited(logOutput);
   } catch {
-    return [];
+    try {
+      const format = "%H%n%an%n%aI%n%s%n%b";
+      const logOutput = execSync(
+        `git log --format="${format}" --name-only`,
+        { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024 }
+      );
+      return parseGitLogLegacy(logOutput);
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -60,55 +85,141 @@ export function getCommitsSince(cwd: string, sinceHash: string): GitCommit[] {
   console.assert(typeof cwd === "string", "cwd must be string");
   console.assert(typeof sinceHash === "string", "sinceHash must be string");
 
+  const validHash = sinceHash.replace(/[^a-f0-9]/g, "").slice(0, 40);
+  if (!validHash || validHash.length < 7) return [];
+
   try {
-    const format = "%H%n%an%n%ad%n%s%n%b%n---COMMIT_END---";
     const logOutput = execSync(
-      `git log --format="${format}" --name-only ${sinceHash}..HEAD`,
+      `git log --format="%H${FIELD_DELIM}%an${FIELD_DELIM}%aI${FIELD_DELIM}%s${FIELD_DELIM}%b" --name-only -z ${validHash}..HEAD`,
       { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024 }
     );
 
-    return parseGitLog(logOutput);
+    return parseGitLogDelimited(logOutput);
   } catch {
     return [];
   }
 }
 
 /**
- * Parse git log output into GitCommit objects
+ * Parse null-delimited git log output (Phase 2 format)
+ * Format: hash\x01author\x01date\x01subject\x01body\x00file1\x00file2\n...
  */
-function parseGitLog(output: string): GitCommit[] {
+function parseGitLogDelimited(output: string): GitCommit[] {
   console.assert(typeof output === "string", "output must be string");
 
   const commits: GitCommit[] = [];
-  const commitBlocks = output.split("---COMMIT_END---").filter(block => block.trim().length > 0);
+  // Split by commit boundary: each commit ends with newline before next hash
+  // With -z flag, entries are null-delimited
+  const rawEntries = output.split(COMMIT_DELIM).filter(e => e.trim().length > 0);
 
-  for (const block of commitBlocks) {
+  let currentCommit: Partial<GitCommit> | null = null;
+  let collectingFiles = false;
+  const fileLines: string[] = [];
+
+  for (const entry of rawEntries) {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) continue;
+
+    // Check if this entry contains field delimiters (commit header)
+    if (trimmed.includes(FIELD_DELIM)) {
+      // Save previous commit if we have one
+      if (currentCommit && currentCommit.hash) {
+        commits.push(finalizeCommit(currentCommit, fileLines));
+        fileLines.length = 0;
+      }
+
+      const fields = trimmed.split(FIELD_DELIM);
+      const hash = (fields[0] ?? "").trim();
+      if (!hash || hash.length < 7) continue;
+
+      currentCommit = {
+        hash,
+        author: (fields[1] ?? "").trim(),
+        date: (fields[2] ?? "").trim(),
+        subject: (fields[3] ?? "").trim(),
+        body: (fields[4] ?? "").trim(),
+      };
+      collectingFiles = false;
+    } else if (currentCommit) {
+      // This is a file entry
+      const cleanFile = trimmed.replace(/^[\n\r]+/, "").replace(/[\n\r]+$/, "");
+      if (cleanFile.length > 0 && (cleanFile.includes("/") || cleanFile.includes("."))) {
+        fileLines.push(cleanFile);
+      }
+      collectingFiles = true;
+    }
+  }
+
+  // Save last commit
+  if (currentCommit && currentCommit.hash) {
+    commits.push(finalizeCommit(currentCommit, fileLines));
+  }
+
+  return commits.reverse(); // Oldest first
+}
+
+/**
+ * Finalize a partially-parsed commit
+ */
+function finalizeCommit(partial: Partial<GitCommit>, files: string[]): GitCommit {
+  console.assert(partial.hash !== undefined, "commit must have hash");
+
+  const subject = partial.subject ?? "";
+  const parsed = parseCommitMessage(subject);
+
+  return {
+    hash: partial.hash!,
+    author: partial.author ?? "",
+    date: partial.date ?? "",
+    subject,
+    body: partial.body ?? "",
+    type: parsed.type,
+    scope: parsed.scope,
+    files: [...files],
+  };
+}
+
+/**
+ * Legacy git log parser (fallback)
+ */
+function parseGitLogLegacy(output: string): GitCommit[] {
+  console.assert(typeof output === "string", "output must be string");
+
+  const commits: GitCommit[] = [];
+  // Split by double newline pattern between commit blocks
+  const blocks = output.split(/\n(?=[a-f0-9]{40}\n)/);
+
+  for (const block of blocks) {
     const lines = block.trim().split("\n");
     if (lines.length < 4) continue;
 
     const hash = lines[0]!.trim();
+    if (!/^[a-f0-9]{7,40}$/.test(hash)) continue;
+
     const author = lines[1]!.trim();
     const date = lines[2]!.trim();
     const subject = lines[3]!.trim();
 
-    // Body is between subject and file list
+    // Separate body from file list
     const bodyLines: string[] = [];
     const fileLines: string[] = [];
-    let inBody = true;
+    let pastBody = false;
 
     for (let i = 4; i < lines.length; i++) {
       const line = lines[i]!.trim();
-      // Files don't start with letters usually (paths), body lines do
-      if (inBody && line.length > 0 && !line.includes(".") && !line.includes("/")) {
+      if (line.length === 0) {
+        pastBody = true;
+        continue;
+      }
+      // Files contain / or .  body prose is plain text
+      if (!pastBody && !line.includes("/") && !line.includes(".")) {
         bodyLines.push(line);
-      } else if (line.length > 0) {
-        inBody = false;
+      } else if (line.includes("/") || line.includes(".")) {
         fileLines.push(line);
       }
     }
 
     const parsed = parseCommitMessage(subject);
-
     commits.push({
       hash,
       author,
@@ -121,7 +232,7 @@ function parseGitLog(output: string): GitCommit[] {
     });
   }
 
-  return commits.reverse(); // Oldest first
+  return commits.reverse();
 }
 
 // ============================================================================

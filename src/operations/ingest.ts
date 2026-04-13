@@ -392,36 +392,53 @@ function updateEntityPage(
     return;
   }
 
-  // Append new commits to evolution section
-  if (newCommits.length > 0) {
-    const today = formatWikiDate(new Date());
-    const commitLines = newCommits.slice(0, 5).map(c =>
-      `- **${c.type}${c.scope ? `(${c.scope})` : ""}**: ${c.subject} ([${c.hash.slice(0, 7)}])`
-    ).join("\n");
+  // Only update timestamp if content has been enriched (not a stub)
+  // Preserve enriched content — don't overwrite with stubs
+  const isEnriched = !content.includes("(to be discovered)")
+    && !content.includes("(to be documented)")
+    && !content.includes("(no files tracked)");
 
-    // Find evolution section and append
-    const evolutionHeader = "## Evolution";
-    if (content.includes(evolutionHeader)) {
-      content = content.replace(
-        evolutionHeader,
-        `${evolutionHeader}\n\n### ${today}\n${commitLines}`
-      );
-    }
-  }
-
-  // Update timestamp
   const today = formatWikiDate(new Date());
+
+  // Always update timestamp
   content = content.replace(
     /\*Last updated:.*\*/,
     `*Last updated: ${today}*`
   );
 
+  // Only append commits if we have new ones
+  if (newCommits.length > 0) {
+    const commitLines = newCommits.slice(0, 5).map(c =>
+      `- **${c.type}${c.scope ? `(${c.scope})` : ""}**: ${c.subject} ([${c.hash.slice(0, 7)}])`
+    ).join("\n");
+
+    if (content.includes("## Evolution")) {
+      // Find evolution section and prepend new entries
+      const evolutionIdx = content.indexOf("## Evolution");
+      if (evolutionIdx !== -1) {
+        const beforeEvolution = content.slice(0, evolutionIdx + "## Evolution".length);
+        const afterEvolution = content.slice(evolutionIdx + "## Evolution".length);
+        content = `${beforeEvolution}\n\n### ${today}\n${commitLines}${afterEvolution}`;
+      }
+    }
+  }
+
+  // Update Key Files section if we have new files and content is still a stub
+  if (!isEnriched && newFiles.length > 0) {
+    const fileList = newFiles.slice(0, 20).map(f => `- \`${f}\``).join("\n");
+    content = content.replace(
+      /## Key Files\n[^#]*/,
+      `## Key Files\n${fileList}\n\n`
+    );
+  }
+
   fs.writeFileSync(filePath, content, "utf-8");
 
-  // Update store
+  // Update store — merge source data, don't replace
   existing.sourceCommits = [...new Set([...existing.sourceCommits, ...newCommits.map(c => c.hash)])];
   existing.sourceFiles = [...new Set([...existing.sourceFiles, ...newFiles])];
   existing.lastIngested = new Date().toISOString();
+  existing.stale = false;  // Fresh ingest clears stale flag
   store.upsertPage(existing);
 }
 

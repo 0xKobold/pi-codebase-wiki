@@ -31,7 +31,9 @@ import {
   initWiki,
   ingestCommits,
   ingestFileTree,
+  updateIndex,
 } from "./operations/ingest.js";
+import { enrichAllEntities } from "./core/smart-ingest.js";
 import { searchWiki, getPageContent, getRelatedPages } from "./operations/query.js";
 import { lintWiki, formatLintResult } from "./operations/lint.js";
 import {
@@ -113,8 +115,9 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
     const stats = store.getStats();
     const stalePages = store.getStalePages();
+    const wikiPath = getWikiPath(state.rootDir, state.config.wikiDir);
 
-    // Build context snippet
+    // Build base context snippet
     const contextLines: string[] = [
       `## Codebase Wiki`,
       ``,
@@ -129,6 +132,33 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
     if (stats.lastIngest) {
       const daysSinceIngest = Math.floor((Date.now() - new Date(stats.lastIngest).getTime()) / (1000 * 60 * 60 * 24));
       contextLines.push(`Last ingest: ${daysSinceIngest} days ago`);
+    }
+
+    // Phase 2: Inject relevant wiki pages based on user prompt
+    const prompt = (event as any)?.prompt ?? (event as any)?.message ?? "";
+    if (typeof prompt === "string" && prompt.length > 0 && wikiPath) {
+      try {
+        const result = searchWiki(prompt, wikiPath, store, state.config.maxContextPages);
+        if (result.matches.length > 0) {
+          contextLines.push("");
+          contextLines.push("### Relevant Wiki Pages");
+          for (const match of result.matches.slice(0, 3)) {
+            const pageContent = getPageContent(match.page.id, wikiPath, store);
+            if (pageContent) {
+              // Truncate to stay within context budget
+              const maxLen = 500;
+              const truncated = pageContent.content.length > maxLen
+                ? pageContent.content.slice(0, maxLen) + "..."
+                : pageContent.content;
+              contextLines.push(`**[[${match.page.id}]]** (score: ${match.score.toFixed(2)}):`);
+              contextLines.push(truncated);
+              contextLines.push("");
+            }
+          }
+        }
+      } catch {
+        // Search failed — just use base context
+      }
     }
 
     contextLines.push("", "Use `wiki_query` to search the wiki, or `wiki_ingest` to update it.");
@@ -147,6 +177,40 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
     if (state.store) {
       state.store.close();
       state.store = null;
+    }
+  });
+
+  // ─── Tool Call Hook: flag stale pages on file edits ───────────────────
+  pi.on("tool_call", async (event, _ctx) => {
+    const toolName = (event as any)?.toolName ?? (event as any)?.name ?? "";
+    const args = (event as any)?.args ?? (event as any)?.parameters ?? {};
+
+    // Track file-modifying actions
+    const editTools = ["edit", "write", "create_file", "write_file", "save_file"];
+    if (!editTools.includes(toolName)) return;
+
+    const filePath = args.path ?? args.filePath ?? args.file ?? args.filename;
+    if (typeof filePath !== "string" || !filePath) return;
+
+    const store = await ensureInitialized({ cwd: state.rootDir });
+    if (!store) return;
+
+    // Find wiki pages that reference this file
+    const allPages = store.getAllPages();
+    const relativePath = filePath.replace(state.rootDir + "/", "");
+
+    let flagged = 0;
+    for (const page of allPages) {
+      if (page.sourceFiles.some(f => f === relativePath || f.endsWith("/" + relativePath.split("/").pop()))) {
+        page.stale = true;
+        page.lastChecked = new Date().toISOString();
+        store.upsertPage(page);
+        flagged++;
+      }
+    }
+
+    if (flagged > 0 && typeof _ctx?.ui?.notify === "function") {
+      _ctx.ui.notify(`📖 ${flagged} wiki page${flagged === 1 ? "" : "s"} flagged as stale`, "info");
     }
   });
 
@@ -169,8 +233,9 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         Type.Literal("commits"),
         Type.Literal("tree"),
         Type.Literal("docs"),
+        Type.Literal("smart"),
         Type.Literal("all"),
-      ], { description: "What to ingest: commits, tree, docs, or all" }),
+      ], { description: "What to ingest: commits, tree, docs, smart (LLM-enrich), or all" }),
       since: Type.Optional(Type.String({ description: "Time period for commits (e.g. '1 week ago', '3 days ago')" })),
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
@@ -213,9 +278,29 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           }
         }
 
-        // docs ingest — scan and update wiki pages from README/docs
+        // Smart ingest — read source files and enrich entity pages
+        if (source === "smart") {
+          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+          const result = enrichAllEntities(wikiPath, ctx.cwd, store);
+          results.push(`Smart: ${result.pagesEnriched} pages enriched, ${result.crossReferencesAdded} cross-references added`);
+          if (result.errors.length > 0) {
+            results.push(`Errors: ${result.errors.join("; ")}`);
+          }
+          // Rebuild index after enrichment
+          updateIndex(wikiPath, store);
+        }
+
+        // Docs ingest — scan and update wiki pages from README/docs
         if (source === "docs" || source === "all") {
           results.push("Docs: ingested documentation files");
+        }
+
+        // Smart ingest as part of 'all'
+        if (source === "all") {
+          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+          const smartResult = enrichAllEntities(wikiPath, ctx.cwd, store);
+          results.push(`Smart: ${smartResult.pagesEnriched} pages enriched, ${smartResult.crossReferencesAdded} cross-references added`);
+          updateIndex(wikiPath, store);
         }
 
         return {
@@ -738,7 +823,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
   // ─── /wiki-ingest ─────────────────────────────────────────────────────
   pi.registerCommand("wiki-ingest", {
-    description: "Ingest sources into the wiki (commits, tree, docs, or all)",
+    description: "Ingest sources into the wiki (commits, tree, smart, docs, or all)",
     handler: async (args, ctx) => {
       const source = args.trim() || "commits";
 
@@ -770,6 +855,16 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
             `✅ Ingested file tree: ${result.filesProcessed} files, ${result.pagesCreated} created, ${result.pagesUpdated} updated`,
             "info"
           );
+        }
+
+        if (source === "smart" || source === "all") {
+          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+          const result = enrichAllEntities(wikiPath, ctx.cwd, store);
+          ctx.ui.notify(
+            `✅ Smart enrich: ${result.pagesEnriched} pages enriched, ${result.crossReferencesAdded} cross-references added`,
+            "info"
+          );
+          updateIndex(wikiPath, store);
         }
       } catch (err) {
         ctx.ui.notify(`❌ Ingest failed: ${err}`, "error");
