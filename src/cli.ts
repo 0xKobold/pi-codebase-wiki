@@ -1,0 +1,756 @@
+#!/usr/bin/env bun
+/**
+ * wiki CLI — Agent-first command-line interface for pi-codebase-wiki.
+ *
+ * Powered by kapy 🐹
+ *
+ * Usage:
+ *   wiki init                        Initialize .codebase-wiki/
+ *   wiki ingest [commits|tree|smart|llm|all]  Ingest sources
+ *   wiki query "why did we..."       Search the wiki
+ *   wiki lint                        Health check
+ *   wiki status                      Show stats
+ *   wiki entity <name>               Create entity page
+ *   wiki decision <title>            Create ADR
+ *   wiki concept <name>              Create concept page
+ *   wiki changelog                   Generate changelog
+ *   wiki evolve <feature>            Trace feature evolution
+ *   wiki reindex                     Rebuild INDEX.md
+ *
+ * All commands support --json for machine-readable output and --no-input
+ * for non-interactive agent use.
+ */
+
+import { kapy } from "@moikapy/kapy";
+import * as fs from "fs";
+import * as path from "path";
+import { WikiStore } from "./core/store.js";
+import {
+  loadConfig,
+  wikiExists,
+  getWikiPath,
+  ensureWikiDirs,
+  initWiki,
+  ingestCommits,
+  ingestFileTree,
+  updateIndex,
+  searchWiki,
+  lintWiki,
+  enrichAllEntities,
+  getRecentCommits,
+  getAllCommits,
+  getCurrentBranch,
+  getLatestHash,
+} from "./core/index.js";
+import { toSlug, validateSlug, formatWikiDate } from "./shared.js";
+import type { WikiConfig, GitCommit } from "./shared.js";
+
+// ============================================================================
+// SHARED HELPERS
+// ============================================================================
+
+const DEFAULT_CONFIG: WikiConfig = loadConfig();
+
+function getStore(rootDir: string): WikiStore | null {
+  if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+    console.error("❌ Wiki not initialized. Run `wiki init` first.");
+    process.exit(1);
+  }
+  const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+  const dbPath = path.join(wikiPath, "meta", "wiki.db");
+  const store = new WikiStore(dbPath);
+  store.init();
+  return store;
+}
+
+function closeStore(store: WikiStore | null): void {
+  if (store) store.close();
+}
+
+// ============================================================================
+// CLI
+// ============================================================================
+
+kapy()
+  // ─── init ────────────────────────────────────────────────────────────
+  .command("init", {
+    description: "Initialize the codebase wiki for the current project",
+    args: [],
+    flags: {
+      dir: {
+        type: "string",
+        alias: "d",
+        description: "Wiki directory name (default: .codebase-wiki)",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const wikiDir = (ctx.args.dir as string) || ".codebase-wiki";
+
+    if (wikiExists(rootDir, wikiDir)) {
+      ctx.log(`📖 Wiki already exists at ${wikiDir}`);
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ exists: true, path: wikiDir }));
+      }
+      return;
+    }
+
+    const config = { ...DEFAULT_CONFIG, wikiDir };
+    const wikiPath = ensureWikiDirs(rootDir, wikiDir);
+    const dbPath = path.join(wikiPath, "meta", "wiki.db");
+    const store = new WikiStore(dbPath);
+    await store.init();
+
+    initWiki(rootDir, config, store);
+    store.close();
+
+    ctx.log(`📖 Wiki initialized at ${wikiDir}`);
+    ctx.log(`Run \`wiki ingest all\` to populate it.`);
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ initialized: true, path: wikiDir }));
+    }
+  })
+
+  // ─── ingest ───────────────────────────────────────────────────────────
+  .command("ingest", {
+    description: "Ingest git commits, file tree, or docs into the wiki",
+    args: [
+      { name: "source", description: "What to ingest: commits, tree, smart, llm, or all", default: "commits" },
+    ],
+    flags: {
+      since: {
+        type: "string",
+        alias: "s",
+        description: "Time period for commits (e.g. '1 week ago', '3 days ago')",
+        default: "1 week ago",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const source = (ctx.args.source as string) || "commits";
+    const since = (ctx.args.since as string) || "1 week ago";
+
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    const spinner = ctx.spinner(`Ingesting ${source}...`);
+    spinner.start();
+
+    const results: string[] = [];
+    let success = true;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+
+      if (source === "commits" || source === "all") {
+        const result = await ingestCommits(rootDir, DEFAULT_CONFIG, store, since);
+        results.push(`Commits: ${result.commitsProcessed} processed, ${result.pagesCreated} created, ${result.pagesUpdated} updated`);
+        if (result.errors.length > 0) results.push(`Errors: ${result.errors.join("; ")}`);
+      }
+
+      if (source === "tree" || source === "all") {
+        const result = await ingestFileTree(rootDir, DEFAULT_CONFIG, store);
+        results.push(`File tree: ${result.filesProcessed} files, ${result.pagesCreated} created, ${result.pagesUpdated} updated`);
+        if (result.errors.length > 0) results.push(`Errors: ${result.errors.join("; ")}`);
+      }
+
+      if (source === "smart" || source === "all") {
+        const result = enrichAllEntities(wikiPath, rootDir, store);
+        results.push(`Smart: ${result.pagesEnriched} pages enriched, ${result.crossReferencesAdded} cross-references added`);
+        updateIndex(wikiPath, store);
+      }
+
+      if (source === "all") {
+        const smartResult = enrichAllEntities(wikiPath, rootDir, store);
+        results.push(`Smart: ${smartResult.pagesEnriched} pages enriched, ${smartResult.crossReferencesAdded} cross-references added`);
+        updateIndex(wikiPath, store);
+      }
+
+      spinner.succeed(`Ingest complete`);
+
+      for (const line of results) {
+        console.log(`  ${line}`);
+      }
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ success: true, source, results }));
+      }
+    } catch (err) {
+      spinner.fail(`Ingest failed`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`❌ ${msg}`);
+      success = false;
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ success: false, error: msg }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── query ────────────────────────────────────────────────────────────
+  .command("query", {
+    description: "Search the codebase wiki for information",
+    args: [
+      { name: "question", required: true, description: "What to search for" },
+    ],
+    flags: {
+      limit: {
+        type: "number",
+        alias: "l",
+        description: "Max results (default 10)",
+        default: 10,
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const question = ctx.args.question as string;
+    const limit = (ctx.args.limit as number) || 10;
+
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      const result = searchWiki(question, wikiPath, store, limit);
+
+      if (result.matches.length === 0) {
+        ctx.warn(`No results for "${question}". Try \`wiki ingest\` first.`);
+        if (ctx.args.json) {
+          console.log(JSON.stringify({ matches: 0, question }));
+        }
+        return;
+      }
+
+      console.log(`\n📖 Wiki search results for "${question}":\n`);
+
+      for (const match of result.matches) {
+        console.log(`  [[${match.page.id}]] (score: ${match.score.toFixed(2)})`);
+        console.log(`  > ${match.snippet.slice(0, 120)}`);
+        console.log(`  Type: ${match.page.type} | Updated: ${match.page.lastIngested.split("T")[0]}`);
+        console.log();
+      }
+
+      console.log(`Found ${result.matches.length} of ${result.totalPages} pages.`);
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({
+          question,
+          matchCount: result.matches.length,
+          totalPages: result.totalPages,
+          matches: result.matches.map(m => ({
+            id: m.page.id,
+            score: m.score,
+            snippet: m.snippet,
+            type: m.page.type,
+          })),
+        }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── lint ─────────────────────────────────────────────────────────────
+  .command("lint", {
+    description: "Health-check the wiki for contradictions, orphans, stale pages, broken links",
+    args: [],
+    flags: {},
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      const result = lintWiki(wikiPath, store);
+      const report = formatLintResult(result);
+
+      console.log(report);
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({
+          issues: result.issues.length,
+          totalPages: result.totalPages,
+          healthyPages: result.healthyPages,
+          stalePages: result.stalePages,
+          orphanPages: result.orphanPages,
+          details: result.issues,
+        }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── status ───────────────────────────────────────────────────────────
+  .command("status", {
+    description: "Show wiki stats: page counts, staleness, last ingest time",
+    args: [],
+    flags: {},
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const stats = store.getStats();
+      const branch = getCurrentBranch(rootDir);
+      const lastHash = getLatestHash(rootDir);
+
+      console.log(`📖 Codebase Wiki Status\n`);
+      console.log(`  Total pages:  ${stats.totalPages}`);
+      for (const [type, count] of Object.entries(stats.pagesByType)) {
+        console.log(`  ${type}:         ${count}`);
+      }
+      console.log(`  Stale pages:  ${stats.stalePages}`);
+      console.log(`  Last ingest:  ${stats.lastIngest ?? "never"}`);
+      console.log(`  Git branch:   ${branch}`);
+      console.log(`  Latest hash:  ${lastHash?.slice(0, 7) ?? "unknown"}`);
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({
+          ...stats,
+          branch,
+          lastHash: lastHash?.slice(0, 7),
+        }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── entity ───────────────────────────────────────────────────────────
+  .command("entity", {
+    description: "Create or update an entity page in the wiki",
+    args: [
+      { name: "name", required: true, description: "Entity name (e.g. 'auth-module')" },
+    ],
+    flags: {
+      summary: {
+        type: "string",
+        alias: "s",
+        description: "One-paragraph description",
+        required: true,
+      },
+      type: {
+        type: "string",
+        alias: "t",
+        description: "Entity type: module, service, util, config, type",
+        default: "module",
+      },
+      files: {
+        type: "string",
+        alias: "f",
+        description: "Comma-separated source file paths",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const name = ctx.args.name as string;
+    const summary = ctx.args.summary as string;
+    const type = (ctx.args.type as string) || "module";
+    const files = ctx.args.files ? String(ctx.args.files).split(",").map(f => f.trim()) : [];
+
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      const entityDir = path.join(wikiPath, "entities");
+      const fileName = name.toLowerCase().replace(/[^a-z0-9]/g, "-");
+      const filePath = path.join(entityDir, `${fileName}.md`);
+      const today = new Date().toISOString().split("T")[0];
+      const fileList = files.map(f => `- \`${f}\``).join("\n");
+
+      const content = `# ${name}\n\n> **Summary**: ${summary}\n\n## Location\n- **Type**: ${type}\n\n## Key Files\n${fileList || "- (no files tracked)"}\n\n## Responsibilities\n- (to be documented)\n\n## Dependencies\n- (to be discovered)\n\n## Dependents\n- (to be discovered)\n\n## Design Decisions\n- (to be documented)\n\n## Evolution\n- **${today}** — Initial creation\n\n## See Also\n- [[index]]\n`;
+
+      fs.mkdirSync(entityDir, { recursive: true });
+      fs.writeFileSync(filePath, content, "utf-8");
+
+      store.upsertPage({
+        id: fileName,
+        path: `entities/${fileName}.md`,
+        type: type as any,
+        title: name,
+        summary,
+        sourceFiles: files,
+        sourceCommits: [],
+        lastIngested: new Date().toISOString(),
+        lastChecked: new Date().toISOString(),
+        inboundLinks: 0,
+        outboundLinks: 0,
+        stale: false,
+      });
+
+      ctx.log(`Entity created: [[${fileName}]]`);
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ success: true, slug: fileName, path: filePath }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── decision ─────────────────────────────────────────────────────────
+  .command("decision", {
+    description: "Create an Architecture Decision Record (ADR) in the wiki",
+    args: [
+      { name: "title", required: true, description: "Decision title (e.g. 'Use SQLite over LevelDB')" },
+    ],
+    flags: {
+      context: {
+        type: "string",
+        alias: "c",
+        description: "What is motivating this decision?",
+        required: true,
+      },
+      choice: {
+        type: "string",
+        description: "What is the change being made?",
+        required: true,
+      },
+      status: {
+        type: "string",
+        alias: "s",
+        description: "Decision status: Proposed, Accepted, Deprecated",
+        default: "Proposed",
+      },
+      alternatives: {
+        type: "string",
+        alias: "a",
+        description: "Alternatives considered",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const title = ctx.args.title as string;
+    const context = ctx.args.context as string;
+    const decision = ctx.args.choice as string;
+    const status = (ctx.args.status as string) || "Proposed";
+    const alternatives = ctx.args.alternatives as string | undefined;
+
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      const decisions = store.getPagesByType("decision");
+      const adrNumber = String(decisions.length + 1).padStart(3, "0");
+      const slug = `adr-${adrNumber}-${title.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
+      const fileName = slug.slice(0, 80);
+      const filePath = path.join(wikiPath, "decisions", `${fileName}.md`);
+      const today = new Date().toISOString().split("T")[0];
+
+      const content = `# ADR-${adrNumber}: ${title}\n\n> **Status**: ${status}\n\n## Context\n${context}\n\n## Decision\n${decision}\n\n## Consequences\n- (to be determined)\n\n## Alternatives Considered\n${alternatives || "- None documented yet"}\n\n## References\n- Created: ${today}\n\n## See Also\n- [[index]]\n`;
+
+      fs.mkdirSync(path.join(wikiPath, "decisions"), { recursive: true });
+      fs.writeFileSync(filePath, content, "utf-8");
+
+      store.upsertPage({
+        id: fileName,
+        path: `decisions/${fileName}.md`,
+        type: "decision",
+        title: `ADR-${adrNumber}: ${title}`,
+        summary: decision.slice(0, 200),
+        sourceFiles: [],
+        sourceCommits: [],
+        lastIngested: new Date().toISOString(),
+        lastChecked: new Date().toISOString(),
+        inboundLinks: 0,
+        outboundLinks: 0,
+        stale: false,
+      });
+
+      ctx.log(`ADR created: [[${fileName}]] — ADR-${adrNumber}: ${title}`);
+      ctx.log(`Status: ${status}`);
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ success: true, slug: fileName, adrNumber }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── concept ──────────────────────────────────────────────────────────
+  .command("concept", {
+    description: "Create or update a concept page in the wiki",
+    args: [
+      { name: "name", required: true, description: "Concept name (e.g. 'hot-reload')" },
+    ],
+    flags: {
+      summary: {
+        type: "string",
+        alias: "s",
+        description: "One-paragraph description",
+        required: true,
+      },
+      applies: {
+        type: "string",
+        alias: "a",
+        description: "Comma-separated entity slugs this concept applies to",
+      },
+      details: {
+        type: "string",
+        alias: "d",
+        description: "Detailed description",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const name = ctx.args.name as string;
+    const summary = ctx.args.summary as string;
+    const appliesTo = ctx.args.applies ? String(ctx.args.applies).split(",").map(s => s.trim()) : [];
+    const details = ctx.args.details as string | undefined;
+
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      const slug = toSlug(name);
+      const conceptDir = path.join(wikiPath, "concepts");
+      const filePath = path.join(conceptDir, `${slug}.md`);
+      const today = formatWikiDate(new Date());
+
+      const appliesLines = appliesTo.length > 0
+        ? appliesTo.map(a => `- [[${a}]]`).join("\n")
+        : "- (to be discovered)";
+
+      const content = `# ${name}\n\n> **Summary**: ${summary}\n\n## Applies To\n${appliesLines}\n\n## Description\n${details || "(to be expanded through analysis)"}\n\n## Key Characteristics\n- (to be discovered)\n\n## See Also\n- [[index]]\n\n---\n*Created: ${today}*\n`;
+
+      fs.mkdirSync(conceptDir, { recursive: true });
+      fs.writeFileSync(filePath, content, "utf-8");
+
+      store.upsertPage({
+        id: slug,
+        path: `concepts/${slug}.md`,
+        type: "concept",
+        title: name,
+        summary,
+        sourceFiles: [],
+        sourceCommits: [],
+        lastIngested: new Date().toISOString(),
+        lastChecked: new Date().toISOString(),
+        inboundLinks: 0,
+        outboundLinks: appliesTo.length,
+        stale: false,
+      });
+
+      for (const target of appliesTo) {
+        if (validateSlug(target)) {
+          store.addCrossReference(slug, target, "concept applies to");
+        }
+      }
+
+      updateIndex(wikiPath, store);
+
+      ctx.log(`Concept created: [[${slug}]]`);
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ success: true, slug, appliesTo }));
+      }
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  // ─── changelog ────────────────────────────────────────────────────────
+  .command("changelog", {
+    description: "Generate a changelog from recent git commits",
+    args: [],
+    flags: {
+      since: {
+        type: "string",
+        alias: "s",
+        description: "Time period (e.g. '1 week ago', '2026-01-01')",
+        default: "1 week ago",
+      },
+      format: {
+        type: "string",
+        alias: "f",
+        description: "Output format: markdown or keepachangelog",
+        default: "keepachangelog",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const since = (ctx.args.since as string) || "1 week ago";
+    const format = (ctx.args.format as string) || "keepachangelog";
+
+    const commits = getRecentCommits(rootDir, since);
+
+    if (commits.length === 0) {
+      ctx.warn(`No commits found since ${since}.`);
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ commits: 0, since }));
+      }
+      return;
+    }
+
+    let changelogContent: string;
+
+    if (format === "keepachangelog") {
+      const lines: string[] = [
+        `# Changelog`,
+        ``,
+        `## [Recent] - ${new Date().toISOString().split("T")[0]}`,
+        ``,
+      ];
+
+      const byType: Record<string, GitCommit[]> = {};
+      for (const commit of commits) {
+        const type = commit.type || "other";
+        if (!byType[type]) byType[type] = [];
+        byType[type].push(commit);
+      }
+
+      const typeLabels: Record<string, string> = {
+        feat: "### Added",
+        fix: "### Fixed",
+        refactor: "### Changed",
+        perf: "### Performance",
+        docs: "### Documentation",
+        test: "### Tests",
+        breaking: "### Breaking Changes",
+      };
+
+      for (const [type, typeCommits] of Object.entries(byType)) {
+        const label = typeLabels[type] ?? "### Other";
+        lines.push(label);
+        for (const c of typeCommits) {
+          const scope = c.scope ? `**${c.scope}**: ` : "";
+          lines.push(`- ${scope}${c.subject} ([${c.hash.slice(0, 7)}])`);
+        }
+        lines.push("");
+      }
+
+      changelogContent = lines.join("\n");
+    } else {
+      const lines = commits.map(c => {
+        const scope = c.scope ? `(${c.scope})` : "";
+        return `- \`${c.hash.slice(0, 7)}\` **${c.type}${scope}**: ${c.subject}`;
+      });
+      changelogContent = `# Recent Commits\n\n${lines.join("\n")}`;
+    }
+
+    // Persist to wiki
+    const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+    if (wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      const changelogPath = path.join(wikiPath, "CHANGELOG.md");
+      fs.writeFileSync(changelogPath, changelogContent, "utf-8");
+    }
+
+    console.log(changelogContent);
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ commits: commits.length, since, format }));
+    }
+  })
+
+  // ─── evolve ───────────────────────────────────────────────────────────
+  .command("evolve", {
+    description: "Trace how a feature or module changed over time",
+    args: [
+      { name: "feature", required: true, description: "Feature or module name to trace" },
+    ],
+    flags: {},
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const feature = ctx.args.feature as string;
+    const allCommits = getAllCommits(rootDir);
+    const slug = feature.toLowerCase().replace(/[^a-z0-9]/g, "-");
+
+    const related = allCommits.filter(c => {
+      const text = `${c.subject} ${c.body} ${c.scope} ${c.files.join(" ")}`.toLowerCase();
+      return text.includes(feature.toLowerCase());
+    });
+
+    if (related.length === 0) {
+      ctx.warn(`No commits found related to "${feature}".`);
+      if (ctx.args.json) {
+        console.log(JSON.stringify({ feature, commits: 0 }));
+      }
+      return;
+    }
+
+    const lines: string[] = [
+      `# Evolution of ${feature}`,
+      ``,
+      `> **Summary**: ${related.length} commits touch this feature.`,
+      ``,
+      `## Timeline`,
+      ``,
+    ];
+
+    for (const c of related.reverse()) {
+      const date = c.date.split(" ")[0] ?? c.date;
+      const scope = c.scope ? `(${c.scope})` : "";
+      lines.push(`### ${date} — ${c.type}${scope}: ${c.subject}`);
+      lines.push(`Commit: \`${c.hash.slice(0, 7)}\` | Files: ${c.files.length}`);
+      if (c.body) lines.push(`> ${c.body.slice(0, 200)}`);
+      lines.push("");
+    }
+
+    // Persist to wiki if initialized
+    if (wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      const evolvePath = path.join(wikiPath, "evolution", `${slug}.md`);
+      fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
+      fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
+
+      const store = getStore(rootDir);
+      if (store) {
+        try {
+          store.upsertPage({
+            id: `evolution-${slug}`,
+            path: `evolution/${slug}.md`,
+            type: "evolution",
+            title: `Evolution of ${feature}`,
+            summary: `${related.length} commits touch ${feature} over its history`,
+            sourceFiles: related.slice(0, 10).map(c => c.files[0] ?? ""),
+            sourceCommits: related.slice(0, 10).map(c => c.hash),
+            lastIngested: new Date().toISOString(),
+            lastChecked: new Date().toISOString(),
+            inboundLinks: 0,
+            outboundLinks: 0,
+            stale: false,
+          });
+          updateIndex(wikiPath, store);
+        } finally {
+          closeStore(store);
+        }
+      }
+    }
+
+    console.log(lines.join("\n"));
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ feature, commits: related.length }));
+    }
+  })
+
+  // ─── reindex ──────────────────────────────────────────────────────────
+  .command("reindex", {
+    description: "Rebuild the wiki INDEX.md from the store",
+    args: [],
+    flags: {},
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const store = getStore(rootDir);
+    if (!store) return;
+
+    try {
+      const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+      updateIndex(wikiPath, store);
+      ctx.log("Wiki index rebuilt.");
+    } finally {
+      closeStore(store);
+    }
+  })
+
+  .run();

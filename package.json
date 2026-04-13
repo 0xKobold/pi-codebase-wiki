@@ -1,13 +1,20 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
-  "keywords": ["pi-package"],
+  "keywords": ["pi-package", "wiki", "codebase", "cli", "agent", "kapy"],
   "main": "./src/index.ts",
+  "bin": {
+    "wiki": "./src/cli.ts"
+  },
   "exports": {
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts"
+    },
+    "./core": {
+      "import": "./src/core/index.ts",
+      "types": "./src/core/index.ts"
     }
   },
   "files": ["src/", "skills/"],
@@ -16,6 +23,7 @@
     "skills": ["./skills/codebase-wiki/SKILL.md"]
   },
   "dependencies": {
+    "@moikapy/kapy": "^0.2.0",
     "sql.js": "^1.11.0"
   },
   "peerDependencies": {
