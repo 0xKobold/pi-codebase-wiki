@@ -1,6 +1,6 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Karpathy Wiki for codebases — auto-maintained knowledge base from git commits and code docs",
   "keywords": ["pi-package"],
   "main": "./src/index.ts",

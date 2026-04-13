@@ -120,6 +120,24 @@ export function initWiki(
     stale: false,
   });
 
+  // Add .codebase-wiki/ to project .gitignore if not already there
+  const gitignorePath = path.join(rootDir, ".gitignore");
+  const wikiIgnoreEntry = config.wikiDir + "/";  // e.g. ".codebase-wiki/"
+  try {
+    let gitignore = "";
+    if (fs.existsSync(gitignorePath)) {
+      gitignore = fs.readFileSync(gitignorePath, "utf-8");
+    }
+    if (!gitignore.includes(wikiIgnoreEntry)) {
+      const lines = gitignore.split("\n");
+      const hasBlankLine = lines[lines.length - 1] === "";
+      const addition = (hasBlankLine ? "" : "\n") + "\n# Codebase wiki — compiled artifact, regenerated from source\n" + wikiIgnoreEntry + "\n";
+      fs.appendFileSync(gitignorePath, addition, "utf-8");
+    }
+  } catch {
+    // Can't write .gitignore — not fatal, just skip
+  }
+
   return wikiPath;
 }
 
