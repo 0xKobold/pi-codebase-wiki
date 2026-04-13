@@ -7,9 +7,92 @@
 
 ## The Idea
 
-Andrej Karpathy's LLM Wiki pattern proved that **compiled knowledge > re-derived knowledge**. Instead of RAG retrieval that starts fresh on every query, you build a **persistent, compounding wiki** that the LLM writes and maintains.
+Instead of RAG retrieval that starts fresh on every query, you build a **persistent, compounding wiki** from your git history and code. Knowledge compiled once and kept current beats knowledge re-derived on every question.
 
-**pi-codebase-wiki applies this to software projects.** Your codebase and commit history become the raw sources. The extension incrementally compiles them into a living documentation wiki that stays current as code changes.
+**pi-codebase-wiki** reads your commits and docs, incrementally builds a structured wiki, and keeps it current as code changes. Works as a [pi](https://github.com/mariozechner/pi-coding-agent) extension, a standalone CLI, or a programmatic library.
+
+## Three Ways to Use
+
+### 1. As a pi Extension
+
+For agents running inside pi — automatic context injection, tool calls, and commands.
+
+```bash
+pi install @0xkobold/pi-codebase-wiki
+```
+
+Then use tools like `wiki_ingest`, `wiki_query`, `wiki_lint` and commands like `/wiki`, `/wiki-init`, `/wiki-ingest all`.
+
+### 2. As a CLI 🐹
+
+Powered by [kapy](https://moikapy.dev/kapy) — agent-first, works in any terminal. No pi required.
+
+```bash
+# Install globally
+bun install -g @0xkobold/pi-codebase-wiki
+
+# Initialize wiki in current project
+wiki init
+
+# Ingest sources
+wiki ingest all
+
+# Search the wiki
+wiki query "Why did we switch from LevelDB to SQLite?"
+
+# Health check
+wiki lint
+
+# Show stats
+wiki status
+
+# Create an entity page
+wiki entity auth-module --summary "Handles user authentication" --type module
+
+# Create an ADR
+wiki decision "Use SQLite over LevelDB" --context "Need reliable persistence" --choice "SQLite for durability"
+
+# Generate changelog
+wiki changelog --since "2 weeks ago"
+
+# Trace feature evolution
+wiki evolve auth
+
+# All commands support --json for machine-readable output
+wiki status --json
+wiki query "how does hot-reload work?" --json
+```
+
+Every command supports `--json` (structured output) and `--no-input` (non-interactive) — designed for agents and automation.
+
+### 3. As a Library
+
+Import the pure operations directly — no pi, no CLI, just functions.
+
+```typescript
+import {
+  initWiki,
+  ingestCommits,
+  ingestFileTree,
+  searchWiki,
+  lintWiki,
+  WikiStore,
+  getRecentCommits,
+} from "@0xkobold/pi-codebase-wiki/core";
+
+// Initialize
+const store = new WikiStore(".codebase-wiki/meta/wiki.db");
+await store.init();
+
+// Ingest
+const result = await ingestCommits(process.cwd(), config, store, "1 week ago");
+
+// Query
+const matches = searchWiki("how does auth work", wikiPath, store, 10);
+
+// Lint
+const issues = lintWiki(wikiPath, store);
+```
 
 ## Three-Layer Architecture
 
@@ -26,23 +109,34 @@ Andrej Karpathy's LLM Wiki pattern proved that **compiled knowledge > re-derived
 ## Quick Start
 
 ```bash
-# Install
+# As a pi extension
 pi install @0xkobold/pi-codebase-wiki
-
-# Initialize wiki for your project
 /wiki-init
-
-# Ingest recent commits and file tree
 /wiki-ingest all
 
-# Search the wiki
-/wiki-query "Why did we switch from LevelDB to SQLite?"
-
-# Health check
-/wiki-lint
+# As a standalone CLI
+bun install -g @0xkobold/pi-codebase-wiki
+wiki init
+wiki ingest all
 ```
 
-## Tools
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `wiki init` | Initialize `.codebase-wiki/` for current project |
+| `wiki ingest [source]` | Ingest commits, tree, smart, llm, or all |
+| `wiki query <question>` | Search the wiki |
+| `wiki lint` | Health check: orphans, stale pages, broken links |
+| `wiki status` | Show page counts, staleness, last ingest |
+| `wiki entity <name>` | Create or update an entity page |
+| `wiki decision <title>` | Create an Architecture Decision Record |
+| `wiki concept <name>` | Create or update a concept page |
+| `wiki changelog` | Generate changelog from recent commits |
+| `wiki evolve <feature>` | Trace feature evolution over time |
+| `wiki reindex` | Rebuild the wiki index |
+
+## pi Tools
 
 | Tool | What It Does |
 |------|-------------|
@@ -52,10 +146,11 @@ pi install @0xkobold/pi-codebase-wiki
 | `wiki_status` | Show wiki stats, staleness, coverage |
 | `wiki_entity` | Create or update an entity page |
 | `wiki_decision` | Create an Architecture Decision Record (ADR) |
+| `wiki_concept` | Create or update a concept page |
 | `wiki_changelog` | Generate changelog from recent commits |
 | `wiki_evolve` | Trace how a feature changed over time |
 
-## Commands
+## pi Commands
 
 | Command | Description |
 |---------|-------------|
