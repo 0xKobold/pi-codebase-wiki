@@ -6,7 +6,7 @@
  */
 
 export { WikiStore } from "./store.js";
-export type { WikiPage, WikiStats, StalePage, CrossReference, IngestLog } from "../shared.js";
+export type { WikiPage, IngestLog, CrossReference, LintResult, LintIssue } from "../shared.js";
 
 export {
   loadConfig,
@@ -39,7 +39,6 @@ export {
 
 export { searchWiki, getPageContent, getRelatedPages } from "../operations/query.js";
 export { lintWiki, formatLintResult } from "../operations/lint.js";
-export type { LintResult, LintIssue } from "../operations/lint.js";
 
 export { enrichAllEntities } from "./smart-ingest.js";
 export { generateEnrichmentBatch, formatEnrichmentMessage } from "./llm-enrich.js";

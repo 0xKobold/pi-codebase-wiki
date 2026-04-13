@@ -36,6 +36,7 @@ import {
   updateIndex,
   searchWiki,
   lintWiki,
+  formatLintResult,
   enrichAllEntities,
   getRecentCommits,
   getAllCommits,
