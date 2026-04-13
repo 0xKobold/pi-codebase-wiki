@@ -120,6 +120,7 @@ input:focus { outline: none; border-color: var(--accent); }
       <button onclick="graphZoom(1.2)">Zoom In</button>
       <button onclick="graphZoom(0.8)">Zoom Out</button>
       <button onclick="graphReset()">Reset</button>
+      <button onclick="graphReheat()">Reheat</button>
     </div>
     <div class="graph-legend">
       <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div> Entity</div>
@@ -228,7 +229,10 @@ function switchTab(tab) {
   if (tab === 'graph' && !graphData) loadGraph();
 }
 
-// ─── Force-Directed Graph ────────────────────────────────────────
+// ─── Force-Directed Graph (Obsidian-style) ─────────────────────────
+let simAlpha = 1, simTicks = 0;
+const SIM_MAX = 600; // stop after this many frames
+
 async function loadGraph() {
   canvas = document.getElementById('graph-canvas');
   ctx = canvas.getContext('2d');
@@ -237,18 +241,36 @@ async function loadGraph() {
   const res = await fetch('/api/graph');
   graphData = await res.json();
   const w = canvas.width, h = canvas.height;
-  graphNodes = graphData.nodes.map((n, i) => ({
-    ...n,
-    x: w/2 + (Math.random()-0.5) * w * 0.6,
-    y: h/2 + (Math.random()-0.5) * h * 0.6,
-    vx: 0, vy: 0,
-    r: Math.max(6, Math.min(16, 6 + graphData.edges.filter(e => e.from===n.id || e.to===n.id).length * 1.5))
-  }));
+
+  // Count connections per node for sizing
+  const connCount = {};
+  graphData.edges.forEach(e => { connCount[e.from] = (connCount[e.from]||0)+1; connCount[e.to] = (connCount[e.to]||0)+1; });
+
+  // Type-based clustering: assign cluster centers per type
+  const typeAngles = { entity: 0, concept: Math.PI*0.5, decision: Math.PI, evolution: Math.PI*1.5, query: Math.PI*0.25, index: Math.PI*1.25 };
+  const clusterR = Math.min(w, h) * 0.25;
+
+  graphNodes = graphData.nodes.map(n => {
+    const angle = typeAngles[n.type] ?? Math.random()*Math.PI*2;
+    const spread = clusterR * (0.3 + Math.random()*0.7);
+    const links = connCount[n.id] || 0;
+    return {
+      ...n,
+      x: w/2 + Math.cos(angle)*spread + (Math.random()-0.5)*60,
+      y: h/2 + Math.sin(angle)*spread + (Math.random()-0.5)*60,
+      vx: 0, vy: 0,
+      links,
+      r: Math.max(4, Math.min(20, 4 + links * 2.5))
+    };
+  });
   graphEdges = graphData.edges;
+  simAlpha = 1; simTicks = 0;
   simulate();
+
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mouseup', () => { dragNode = null; });
+  canvas.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('mouseleave', () => { dragNode = null; hoverNode = null; });
   canvas.addEventListener('wheel', onWheel, {passive: false});
   canvas.addEventListener('dblclick', onDblClick);
 }
@@ -256,38 +278,80 @@ async function loadGraph() {
 function resizeCanvas() { if (!canvas) return; canvas.width = canvas.parentElement.clientWidth; canvas.height = canvas.parentElement.clientHeight; }
 
 function simulate() {
-  const alpha = 0.3;
-  for (let iter = 0; iter < 3; iter++) {
+  if (simTicks > SIM_MAX) { drawGraph(); return; } // simulation cools down
+  simTicks++;
+  simAlpha = Math.max(0.001, 1 - simTicks / SIM_MAX); // decay alpha
+  const w = canvas.width, h = canvas.height;
+
+  for (let iter = 0; iter < 5; iter++) {
+    // ── Repulsion: spread nodes apart ──
     for (let i = 0; i < graphNodes.length; i++) {
       for (let j = i+1; j < graphNodes.length; j++) {
         const dx = graphNodes[j].x - graphNodes[i].x;
         const dy = graphNodes[j].y - graphNodes[i].y;
-        const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-        const force = (800 * alpha) / (dist * dist);
-        graphNodes[i].vx -= (dx/dist) * force;
-        graphNodes[i].vy -= (dy/dist) * force;
-        graphNodes[j].vx += (dx/dist) * force;
-        graphNodes[j].vy += (dy/dist) * force;
+        const dist2 = dx*dx + dy*dy;
+        const dist = Math.sqrt(dist2) || 1;
+        const minDist = graphNodes[i].r + graphNodes[j].r + 20;
+        // Strong repulsion when overlapping
+        if (dist < minDist) {
+          const push = ((minDist - dist) / dist) * 0.5 * simAlpha;
+          graphNodes[i].vx -= dx * push;
+          graphNodes[i].vy -= dy * push;
+          graphNodes[j].vx += dx * push;
+          graphNodes[j].vy += dy * push;
+        }
+        // General repulsion (Coulomb-like, softer)
+        const repForce = (300 * simAlpha) / (dist2 + 100);
+        graphNodes[i].vx -= (dx/dist) * repForce;
+        graphNodes[i].vy -= (dy/dist) * repForce;
+        graphNodes[j].vx += (dx/dist) * repForce;
+        graphNodes[j].vy += (dy/dist) * repForce;
       }
     }
+
+    // ── Attraction: pull connected nodes together ──
+    const idealLen = 120; // ideal edge length
     for (const e of graphEdges) {
       const src = graphNodes.find(n => n.id === e.from);
       const tgt = graphNodes.find(n => n.id === e.to);
       if (!src || !tgt) continue;
       const dx = tgt.x - src.x, dy = tgt.y - src.y;
       const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-      const force = dist * 0.005;
-      src.vx += (dx/dist) * force; src.vy += (dy/dist) * force;
-      tgt.vx -= (dx/dist) * force; tgt.vy -= (dy/dist) * force;
+      const force = (dist - idealLen) * 0.02 * simAlpha; // spring to ideal length
+      src.vx += (dx/dist) * force;
+      src.vy += (dy/dist) * force;
+      tgt.vx -= (dx/dist) * force;
+      tgt.vy -= (dy/dist) * force;
     }
+
+    // ── Type clustering: gently pull same-type nodes together ──
+    const typeCenters = {};
+    graphNodes.forEach(n => {
+      if (!typeCenters[n.type]) typeCenters[n.type] = { x: 0, y: 0, count: 0 };
+      typeCenters[n.type].x += n.x; typeCenters[n.type].y += n.y; typeCenters[n.type].count++;
+    });
+    Object.values(typeCenters).forEach(c => { c.x /= c.count; c.y /= c.count; });
     for (const n of graphNodes) {
-      n.vx += (canvas.width/2 - n.x) * 0.001;
-      n.vy += (canvas.height/2 - n.y) * 0.001;
+      const c = typeCenters[n.type];
+      if (!c) continue;
+      n.vx += (c.x - n.x) * 0.003 * simAlpha;
+      n.vy += (c.y - n.y) * 0.003 * simAlpha;
     }
+
+    // ── Center gravity: keep everything on screen ──
+    for (const n of graphNodes) {
+      n.vx += (w/2 - n.x) * 0.0005 * simAlpha;
+      n.vy += (h/2 - n.y) * 0.0005 * simAlpha;
+    }
+
+    // ── Apply velocity with damping ──
     for (const n of graphNodes) {
       if (n === dragNode) continue;
-      n.vx *= 0.85; n.vy *= 0.85;
+      n.vx *= 0.7; n.vy *= 0.7; // high damping = stable
       n.x += n.vx; n.y += n.vy;
+      // Keep in bounds
+      n.x = Math.max(n.r, Math.min(w - n.r, n.x));
+      n.y = Math.max(n.r, Math.min(h - n.r, n.y));
     }
   }
   drawGraph();
@@ -301,26 +365,63 @@ function drawGraph() {
   ctx.save();
   ctx.translate(graphOffX, graphOffY);
   ctx.scale(graphScale, graphScale);
-  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 0.5;
+
+  // Get connected nodes of hover for highlighting
+  const hoverConnected = hoverNode ? new Set(graphEdges.filter(e => e.from===hoverNode.id || e.to===hoverNode.id).flatMap(e => [e.from, e.to])) : null;
+
+  // Edges
   for (const e of graphEdges) {
     const src = graphNodes.find(n => n.id === e.from);
     const tgt = graphNodes.find(n => n.id === e.to);
     if (!src || !tgt) continue;
+    const isHighlight = hoverNode && (e.from===hoverNode.id || e.to===hoverNode.id);
+    ctx.strokeStyle = isHighlight ? 'rgba(88,166,255,0.6)' : (hoverNode ? 'rgba(48,54,61,0.15)' : 'rgba(48,54,61,0.4)');
+    ctx.lineWidth = isHighlight ? 1.5 : 0.5;
     ctx.beginPath(); ctx.moveTo(src.x, src.y); ctx.lineTo(tgt.x, tgt.y); ctx.stroke();
   }
+
+  // Nodes
   for (const n of graphNodes) {
     const color = TYPE_COLORS[n.type] || '#484f58';
     const isHover = n === hoverNode;
+    const isConnected = hoverNode && hoverConnected && hoverConnected.has(n.id);
+    const isDimmed = hoverNode && !isHover && !isConnected;
     const r = n.r + (isHover ? 3 : 0);
+
+    ctx.globalAlpha = isDimmed ? 0.2 : 1;
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
-    if (isHover) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
-    ctx.fillStyle = isHover ? '#fff' : '#c9d1d9';
-    ctx.font = (isHover ? 'bold ' : '') + '11px -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(n.title.length > 20 ? n.title.slice(0,18)+'...' : n.title, n.x, n.y + r + 14);
+    if (isHover || isConnected) { ctx.strokeStyle = isHover ? '#fff' : color; ctx.lineWidth = isHover ? 2 : 1; ctx.stroke(); }
+
+    // Labels: always show for high-degree nodes, hover, or connected; dim otherwise
+    const showLabel = isHover || isConnected || n.links >= 2 || !hoverNode;
+    if (showLabel) {
+      ctx.fillStyle = isHover ? '#fff' : (isConnected ? '#c9d1d9' : '#8b949e');
+      ctx.font = (isHover ? 'bold 12' : (n.links >= 3 ? 'bold 11' : '11')) + 'px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      const label = n.title.length > 22 ? n.title.slice(0,20)+'...' : n.title;
+      ctx.fillText(label, n.x, n.y + r + 14);
+    }
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
+
+  // Hover tooltip
+  if (hoverNode) {
+    const sx = hoverNode.x * graphScale + graphOffX;
+    const sy = hoverNode.y * graphScale + graphOffY - hoverNode.r * graphScale - 8;
+    ctx.save();
+    ctx.font = '12px -apple-system, sans-serif';
+    const label = hoverNode.type + ' · ' + hoverNode.links + ' links';
+    const tw = ctx.measureText(label).width + 16;
+    ctx.fillStyle = 'rgba(22,27,34,0.95)';
+    ctx.strokeStyle = '#30363d';
+    ctx.lineWidth = 1;
+    const tx = Math.max(4, Math.min(w - tw - 4, sx - tw/2));
+    ctx.beginPath(); ctx.roundRect(tx, sy - 24, tw, 22, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#c9d1d9'; ctx.textAlign = 'left'; ctx.fillText(label, tx + 8, sy - 8);
+    ctx.restore();
+  }
 }
 
 function findNode(mx, my) {
@@ -328,16 +429,23 @@ function findNode(mx, my) {
   for (const n of graphNodes) { const dx = n.x-x, dy = n.y-y; if (dx*dx+dy*dy < (n.r+4)*(n.r+4)) return n; }
   return null;
 }
-function onMouseDown(e) { const n = findNode(e.offsetX, e.offsetY); if (n) { dragNode = n; } }
-function onMouseMove(e) {
-  hoverNode = findNode(e.offsetX, e.offsetY);
-  canvas.style.cursor = hoverNode ? 'pointer' : 'default';
-  if (dragNode) { dragNode.x = (e.offsetX-graphOffX)/graphScale; dragNode.y = (e.offsetY-graphOffY)/graphScale; dragNode.vx=0; dragNode.vy=0; }
+let isPanning = false, panStart = {x:0, y:0};
+function onMouseDown(e) {
+  if (e.shiftKey || e.button === 1) { isPanning = true; panStart = {x: e.offsetX - graphOffX, y: e.offsetY - graphOffY}; e.preventDefault(); return; }
+  const n = findNode(e.offsetX, e.offsetY); if (n) { dragNode = n; }
 }
+function onMouseMove(e) {
+  if (isPanning) { graphOffX = e.offsetX - panStart.x; graphOffY = e.offsetY - panStart.y; drawGraph(); return; }
+  hoverNode = findNode(e.offsetX, e.offsetY);
+  canvas.style.cursor = hoverNode ? 'pointer' : (e.shiftKey ? 'grab' : 'default');
+  if (dragNode) { dragNode.x = (e.offsetX-graphOffX)/graphScale; dragNode.y = (e.offsetY-graphOffY)/graphScale; dragNode.vx=0; dragNode.vy=0; simAlpha = Math.max(simAlpha, 0.2); simTicks = Math.min(simTicks, SIM_MAX - 60); }
+}
+function onMouseUp() { if (isPanning) { isPanning = false; } else { dragNode = null; } }
 function onWheel(e) { e.preventDefault(); graphScale = Math.max(0.2, Math.min(5, graphScale * (e.deltaY>0?0.9:1.1))); }
 function onDblClick(e) { const n = findNode(e.offsetX, e.offsetY); if (n) loadPage(n.id); }
 function graphZoom(f) { graphScale = Math.max(0.2, Math.min(5, graphScale * f)); }
-function graphReset() { graphScale = 1; graphOffX = 0; graphOffY = 0; }
+function graphReset() { graphScale = 1; graphOffX = 0; graphOffY = 0; graphReheat(); }
+function graphReheat() { simAlpha = 1; simTicks = 0; requestAnimationFrame(simulate); }
 
 loadPages();
 </script>
