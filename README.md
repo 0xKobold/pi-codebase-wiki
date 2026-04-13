@@ -27,12 +27,14 @@ Then use tools like `wiki_ingest`, `wiki_query`, `wiki_lint` and commands like `
 
 Powered by [kapy](https://moikapy.dev/kapy) — agent-first, works in any terminal. No pi required.
 
+> **Note:** For string flags, use `--flag=value` syntax (e.g. `--summary="My summary"`) to avoid parsing ambiguity with kapy's global arg scanner.
+
 ```bash
 # Install globally
 bun install -g @0xkobold/pi-codebase-wiki
 
 # Initialize wiki in current project
-wiki init
+wiki wiki-init
 
 # Ingest sources
 wiki ingest all
@@ -47,13 +49,13 @@ wiki lint
 wiki status
 
 # Create an entity page
-wiki entity auth-module --summary "Handles user authentication" --type module
+wiki entity auth-module --summary="Handles user authentication" --type=module
 
 # Create an ADR
-wiki decision "Use SQLite over LevelDB" --context "Need reliable persistence" --choice "SQLite for durability"
+wiki decision "Use SQLite over LevelDB" --context="Need reliable persistence" --choice="SQLite for durability"
 
 # Generate changelog
-wiki changelog --since "2 weeks ago"
+wiki changelog --since="2 weeks ago"
 
 # Trace feature evolution
 wiki evolve auth
@@ -116,7 +118,7 @@ pi install @0xkobold/pi-codebase-wiki
 
 # As a standalone CLI
 bun install -g @0xkobold/pi-codebase-wiki
-wiki init
+wiki wiki-init
 wiki ingest all
 ```
 
@@ -124,7 +126,7 @@ wiki ingest all
 
 | Command | Description |
 |---------|-------------|
-| `wiki init` | Initialize `.codebase-wiki/` for current project |
+| `wiki wiki-init` | Initialize `.codebase-wiki/` for current project |
 | `wiki ingest [source]` | Ingest commits, tree, smart, llm, or all |
 | `wiki query <question>` | Search the wiki |
 | `wiki lint` | Health check: orphans, stale pages, broken links |

@@ -5,7 +5,7 @@
  * Powered by kapy 🐹
  *
  * Usage:
- *   wiki wiki-init                  Initialize .codebase-wiki/
+ *   wiki init                    Initialize .codebase-wiki/
  *   wiki ingest [commits|tree|smart|llm|all]  Ingest sources
  *   wiki query "why did we..."       Search the wiki
  *   wiki lint                        Health check
@@ -54,7 +54,7 @@ const DEFAULT_CONFIG: WikiConfig = loadConfig();
 
 async function getStore(rootDir: string): Promise<WikiStore | null> {
   if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
-    console.error("❌ Wiki not initialized. Run `wiki wiki-init` first.");
+    console.error("❌ Wiki not initialized. Run `wiki init` first.");
     process.exit(1);
   }
   const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
@@ -78,8 +78,8 @@ function closeStore(store: WikiStore | null): void {
 // ============================================================================
 
 kapy()
-  // ─── wiki-init ─────────────────────────────────────────────────────────
-  .command("wiki-init", {
+  // ─── init ────────────────────────────────────────────────────────────
+  .command("init", {
     description: "Initialize the codebase wiki for the current project",
     args: [],
     flags: {
