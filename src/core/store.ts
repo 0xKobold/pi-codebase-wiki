@@ -308,6 +308,10 @@ export class WikiStore {
     }));
   }
 
+  getCrossReferences(pageId: string): CrossReference[] {
+    return this.getOutboundLinks(pageId);
+  }
+
   // ============================================================================
   // INGEST LOG
   // ============================================================================

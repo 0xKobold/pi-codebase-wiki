@@ -34,6 +34,7 @@ import {
   updateIndex,
 } from "./operations/ingest.js";
 import { enrichAllEntities } from "./core/smart-ingest.js";
+import { generateEnrichmentBatch, formatEnrichmentMessage, type EnrichmentPrompt } from "./core/llm-enrich.js";
 import { searchWiki, getPageContent, getRelatedPages } from "./operations/query.js";
 import { lintWiki, formatLintResult } from "./operations/lint.js";
 import {
@@ -234,8 +235,9 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         Type.Literal("tree"),
         Type.Literal("docs"),
         Type.Literal("smart"),
+        Type.Literal("llm"),
         Type.Literal("all"),
-      ], { description: "What to ingest: commits, tree, docs, smart (LLM-enrich), or all" }),
+      ], { description: "What to ingest: commits, tree, docs, smart (regex-enrich), llm (agent-enrich), or all" }),
       since: Type.Optional(Type.String({ description: "Time period for commits (e.g. '1 week ago', '3 days ago')" })),
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
@@ -278,16 +280,31 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           }
         }
 
-        // Smart ingest — read source files and enrich entity pages
-        if (source === "smart") {
+        // Smart ingest — read source files and enrich entity pages (regex/heuristic, no LLM)
+        if (source === "smart" || source === "llm") {
           const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
           const result = enrichAllEntities(wikiPath, ctx.cwd, store);
           results.push(`Smart: ${result.pagesEnriched} pages enriched, ${result.crossReferencesAdded} cross-references added`);
           if (result.errors.length > 0) {
             results.push(`Errors: ${result.errors.join("; ")}`);
           }
-          // Rebuild index after enrichment
           updateIndex(wikiPath, store);
+        }
+
+        // LLM ingest — ask the agent to enrich stub pages with LLM-written content
+        if (source === "llm") {
+          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+          const pages = store.getAllPages().filter(p => p.type === "entity");
+          const prompts = generateEnrichmentBatch(pages, store, wikiPath, 5);
+          if (prompts.length > 0) {
+            const message = formatEnrichmentMessage(prompts);
+            // Send to the running agent — it will write the enriched pages
+            pi.sendUserMessage(message, { deliverAs: "followUp" });
+            results.push(`LLM: sent ${prompts.length} enrichment prompts to agent`);
+            results.push("The agent will enrich pages and write them to .codebase-wiki/entities/");
+          } else {
+            results.push("LLM: no stub pages found that need enrichment");
+          }
         }
 
         // Docs ingest — scan and update wiki pages from README/docs
@@ -857,7 +874,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           );
         }
 
-        if (source === "smart" || source === "all") {
+        if (source === "smart" || source === "llm" || source === "all") {
           const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
           const result = enrichAllEntities(wikiPath, ctx.cwd, store);
           ctx.ui.notify(
@@ -865,6 +882,22 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
             "info"
           );
           updateIndex(wikiPath, store);
+        }
+
+        if (source === "llm") {
+          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+          const pages = store.getAllPages().filter(p => p.type === "entity");
+          const prompts = generateEnrichmentBatch(pages, store, wikiPath, 5);
+          if (prompts.length > 0) {
+            const message = formatEnrichmentMessage(prompts);
+            pi.sendUserMessage(message, { deliverAs: "followUp" });
+            ctx.ui.notify(
+              `📖 LLM enrich: ${prompts.length} pages queued for agent enrichment`,
+              "info"
+            );
+          } else {
+            ctx.ui.notify("📖 No stub pages need LLM enrichment", "info");
+          }
         }
       } catch (err) {
         ctx.ui.notify(`❌ Ingest failed: ${err}`, "error");
