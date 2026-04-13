@@ -66,8 +66,19 @@ export function enrichAllEntities(
     allDeps.push(...entityDeps);
   }
 
-  // Build cross-reference map
+  // Build cross-reference map (outbound: entity → targets it depends on)
   const crossRefs = buildCrossReferences(allDeps, allModules);
+
+  // Build reverse map (inbound: entity → entities that depend on it)
+  const inboundRefs = new Map<string, Set<string>>();
+  for (const [from, targets] of crossRefs) {
+    for (const to of targets) {
+      if (!inboundRefs.has(to)) {
+        inboundRefs.set(to, new Set());
+      }
+      inboundRefs.get(to)!.add(from);
+    }
+  }
 
   // Phase 2: Enrich each page
   for (const page of pages) {
@@ -89,7 +100,9 @@ export function enrichAllEntities(
       const analysis = analyzeEntityContent(page, rootDir, allModules);
 
       // Generate enriched content
-      const enriched = generateEnrichedContent(page, analysis, crossRefs.get(page.id), allModules);
+      // Dependencies = outbound (what this entity imports)
+      // Dependents = inbound (what imports this entity)
+      const enriched = generateEnrichedContent(page, analysis, inboundRefs.get(page.id), allModules);
 
       // Write only if content actually changed
       if (enriched !== content) {
@@ -319,11 +332,12 @@ function analyzeEntityDeps(page: WikiPage, rootDir: string): DependencyInfo[] {
 
 /**
  * Generate enriched markdown content for an entity page
+ * @param inboundRefs Set of entity IDs that depend on (import from) this entity
  */
 function generateEnrichedContent(
   page: WikiPage,
   analysis: EntityContent,
-  outboundRefs?: Set<string>,
+  inboundRefs?: Set<string>,
   allModules: string[] = []
 ): string {
   const today = formatWikiDate(new Date());
@@ -353,7 +367,7 @@ function generateEnrichedContent(
   if (analysis.dependencies.length > 0) {
     for (const dep of analysis.dependencies) {
       const slug = resolveImportToSlug(dep, "", allModules);
-      if (slug) {
+      if (slug && allModules.includes(slug)) {
         lines.push(`- [[${slug}]] — \`${dep}\``);
       } else {
         lines.push(`- \`${dep}\``);
@@ -364,11 +378,18 @@ function generateEnrichedContent(
   }
 
   lines.push("", "## Dependents");
-  if (outboundRefs && outboundRefs.size > 0) {
-    // Outbound refs from cross-references — only link valid slugs
-    for (const ref of outboundRefs) {
-      if (/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(ref)) {
-        lines.push(`- Referenced by [[${ref}]]`);
+  if (inboundRefs && inboundRefs.size > 0) {
+    // Inbound refs — only link to pages that actually exist
+    for (const ref of inboundRefs) {
+      if (allModules.includes(ref)) {
+        lines.push(`- [[${ref}]]`);
+      }
+    }
+    // If all refs were filtered out, show as inline
+    const linked = [...inboundRefs].filter(r => allModules.includes(r));
+    if (linked.length === 0 && inboundRefs.size > 0) {
+      for (const ref of inboundRefs) {
+        lines.push(`- \`${ref}\``);
       }
     }
   } else {
