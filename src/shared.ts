@@ -10,7 +10,7 @@
 // ============================================================================
 
 /** Wiki page types */
-export type PageType = "entity" | "concept" | "decision" | "evolution" | "comparison" | "changelog" | "index" | "schema";
+export type PageType = "entity" | "concept" | "decision" | "evolution" | "comparison" | "query" | "changelog" | "index" | "schema";
 
 /** Ingest source types */
 export type IngestSourceType = "commit" | "file" | "docs" | "manual" | "full-tree";
@@ -142,6 +142,7 @@ export const PAGE_TYPE_DIR: Record<PageType, string> = {
   decision: "decisions",
   evolution: "evolution",
   comparison: "comparisons",
+  query: "queries",
   changelog: "",
   index: "",
   schema: "",

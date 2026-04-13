@@ -270,3 +270,67 @@ export function findEmptySections(wikiRoot: string, pages: WikiPage[]): LintIssu
 
   return issues;
 }
+/**
+ * Detect potential contradictions between pages.
+ * Flags pages with very high content overlap that might be duplicates.
+ */
+export function findContradictions(
+  wikiRoot: string,
+  pages: WikiPage[]
+): LintIssue[] {
+  const issues: LintIssue[] = [];
+  const summaries = new Map<string, { page: WikiPage; keywords: Set<string> }>();
+
+  const stopwords = new Set([
+    "module", "this", "that", "with", "from", "also",
+    "into", "been", "have", "will", "were", "they",
+    "their", "which", "would", "there", "could", "other",
+  ]);
+
+  // Extract key terms from each page
+  for (const page of pages) {
+    const pagePath = path.join(wikiRoot, page.path);
+    let content = "";
+    try {
+      content = fs.readFileSync(pagePath, "utf-8").toLowerCase();
+    } catch {
+      continue;
+    }
+
+    const words = content.match(/[a-z_]{4,}/g) || [];
+    const keywords = new Set(words.filter(w => !stopwords.has(w)).slice(0, 50));
+
+    if (keywords.size > 5) {
+      summaries.set(page.id, { page, keywords });
+    }
+  }
+
+  // Compare pairs for significant overlap
+  const entries = Array.from(summaries.entries());
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const [idA, dataA] = entries[i]!;
+      const [idB, dataB] = entries[j]!;
+
+      // Jaccard similarity
+      const intersection = new Set(
+        [...dataA.keywords].filter(k => dataB.keywords.has(k))
+      );
+      const union = new Set([...dataA.keywords, ...dataB.keywords]);
+      const similarity = union.size > 0 ? intersection.size / union.size : 0;
+
+      // Very high overlap between same-type = potential duplicate
+      if (similarity > 0.6 && dataA.page.type === dataB.page.type) {
+        issues.push({
+          type: "contradiction",
+          severity: "warning",
+          pagePath: dataA.page.path,
+          description: `"${dataA.page.title}" and "${dataB.page.title}" have ${(similarity * 100).toFixed(0)}% content overlap — may be duplicates or contradictions`,
+          suggestion: `Review and merge or cross-reference: [[${idA}]] ↔ [[${idB}]]`,
+        });
+      }
+    }
+  }
+
+  return issues;
+}

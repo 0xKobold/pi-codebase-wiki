@@ -70,6 +70,7 @@ export function ensureWikiDirs(rootDir: string, wikiDir: string = DEFAULT_WIKI_D
     path.join(wikiPath, "decisions"),
     path.join(wikiPath, "evolution"),
     path.join(wikiPath, "comparisons"),
+    path.join(wikiPath, "queries"),
     path.join(wikiPath, "templates"),
     path.join(wikiPath, "meta"),
   ];

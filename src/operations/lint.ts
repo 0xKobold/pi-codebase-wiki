@@ -15,6 +15,7 @@ import {
   findStalePages,
   findMissingConcepts,
   findEmptySections,
+  findContradictions,
 } from "../core/staleness.js";
 
 // ============================================================================
@@ -53,7 +54,11 @@ export function lintWiki(
   const emptySectionIssues = findEmptySections(wikiPath, pages);
   issues.push(...emptySectionIssues);
 
-  // 6. Update staleness checks in the store
+  // 6. Contradictions (high-overlap pages that might be duplicates)
+  const contradictionIssues = findContradictions(wikiPath, pages);
+  issues.push(...contradictionIssues);
+
+  // 7. Update staleness checks in the store
   const stalenessChecks = checkAllStaleness(pages, wikiPath);
   for (const check of stalenessChecks) {
     store.upsertStalenessCheck(check);

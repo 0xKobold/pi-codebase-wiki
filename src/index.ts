@@ -26,7 +26,7 @@ import {
   ensureWikiDirs,
 } from "./core/config.js";
 import type { WikiConfig, GitCommit, LintResult } from "./shared.js";
-import { DEFAULT_WIKI_CONFIG } from "./shared.js";
+import { DEFAULT_WIKI_CONFIG, toSlug, formatWikiDate, validateSlug } from "./shared.js";
 import {
   initWiki,
   ingestCommits,
@@ -387,6 +387,56 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       lines.push(`Found ${result.matches.length} of ${result.totalPages} pages.`);
 
+      // Karpathy pattern: file good queries back as wiki pages
+      // "Today's query becomes tomorrow's cross-reference."
+      if (result.matches.length >= 2) {
+        const slug = toSlug(question);
+        const queryFilePath = path.join(wikiPath, "queries", `${slug}.md`);
+        const existingPage = store.getPage(slug);
+        if (!existingPage) {
+          const matchedIds = result.matches.map(m => m.page.id).join(", ");
+          const today = formatWikiDate(new Date());
+          const queryContent = [
+            `# ${question}`,
+            ``,
+            `> **Query**: ${question}`,
+            `> **Filed**: ${today}`,
+            `> **Matches**: ${result.matches.length} pages`,
+            ``,
+            `## Matched Pages`,
+            ``,
+          ];
+          for (const m of result.matches.slice(0, 5)) {
+            queryContent.push(`- [[${m.page.id}]] (${m.score.toFixed(2)}) — ${m.snippet.slice(0, 80)}`);
+          }
+          queryContent.push("", "## Open Questions", "", "(to be discovered through further analysis)", "");
+          queryContent.push(`---`, `*Filed by wiki_query on ${today}*`);
+
+          fs.mkdirSync(path.join(wikiPath, "queries"), { recursive: true });
+          fs.writeFileSync(queryFilePath, queryContent.join("\n"), "utf-8");
+
+          store.upsertPage({
+            id: slug,
+            path: `queries/${slug}.md`,
+            type: "query",
+            title: question,
+            summary: `Query: ${question} — ${result.matches.length} matches: ${matchedIds}`,
+            sourceFiles: [],
+            sourceCommits: [],
+            lastIngested: new Date().toISOString(),
+            lastChecked: new Date().toISOString(),
+            inboundLinks: 0,
+            outboundLinks: result.matches.length,
+            stale: false,
+          });
+
+          for (const m of result.matches.slice(0, 5)) {
+            store.addCrossReference(slug, m.page.id, "query match");
+          }
+          updateIndex(wikiPath, store);
+        }
+      }
+
       return {
         content: [{ type: "text", text: lines.join("\n") }],
         details: {
@@ -426,6 +476,16 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
       const result = lintWiki(wikiPath, store);
       const report = formatLintResult(result);
+
+      // Karpathy pattern: flag contradictions to the agent when lint finds them
+      const contradictions = result.issues.filter(i => i.type === "contradiction");
+      if (contradictions.length > 0) {
+        const contrLines = contradictions.map(c => `  - ${c.description}`).join("\n");
+        pi.sendUserMessage(
+          `⚠️ **Wiki Lint found ${contradictions.length} potential contradiction(s):**\n\n${contrLines}\n\nConsider using \`wiki_ingest source=llm\` to resolve these.`,
+          { deliverAs: "followUp" }
+        );
+      }
 
       return {
         content: [{ type: "text", text: report }],
@@ -638,7 +698,99 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
     },
   });
 
-  // ─── wiki_changelog ───────────────────────────────────────────────────
+  // ─── wiki_concept ──────────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_concept",
+    label: "Wiki Concept",
+    description: "Create or update a concept page in the codebase wiki. Concept pages document cross-cutting patterns, architectural concepts, and recurring themes.",
+    promptSnippet: "Create or update a wiki concept for a cross-cutting pattern",
+    parameters: Type.Object({
+      name: Type.String({ description: "Concept name (e.g. 'hot-reload', 'event-driven-architecture')" }),
+      summary: Type.String({ description: "One-paragraph description of the concept" }),
+      applies_to: Type.Optional(Type.Array(Type.String(), { description: "Entity slugs this concept applies to" })),
+      details: Type.Optional(Type.String({ description: "Detailed description of the concept" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const name = (params as any).name as string;
+      const summary = (params as any).summary as string;
+      const appliesTo = ((params as any).applies_to as string[]) ?? [];
+      const details = (params as any).details as string | undefined;
+
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        return { content: [{ type: "text", text: "Wiki not initialized. Run /wiki-init first." }], details: { success: false } };
+      }
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "Store initialization failed." }], details: { success: false } };
+      }
+
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+      const slug = toSlug(name);
+      const conceptDir = path.join(wikiPath, "concepts");
+      const filePath = path.join(conceptDir, slug + ".md");
+      const today = formatWikiDate(new Date());
+
+      const appliesLines = appliesTo.length > 0
+        ? appliesTo.map(function(a) { return "- [[" + a + "]]"; }).join("\n")
+        : "- (to be discovered)";
+
+      const conceptLines = [
+        "# " + name,
+        "",
+        "> **Summary**: " + summary,
+        "",
+        "## Applies To",
+        appliesLines,
+        "",
+        "## Description",
+        details || "(to be expanded through analysis)",
+        "",
+        "## Key Characteristics",
+        "- (to be discovered)",
+        "",
+        "## See Also",
+        "- [[index]]",
+        "",
+        "---",
+        "*Created: " + today + "*",
+      ];
+      const conceptContent = conceptLines.join("\n");
+
+      fs.mkdirSync(conceptDir, { recursive: true });
+      fs.writeFileSync(filePath, conceptContent, "utf-8");
+
+      store.upsertPage({
+        id: slug,
+        path: "concepts/" + slug + ".md",
+        type: "concept",
+        title: name,
+        summary: summary,
+        sourceFiles: [],
+        sourceCommits: [],
+        lastIngested: new Date().toISOString(),
+        lastChecked: new Date().toISOString(),
+        inboundLinks: 0,
+        outboundLinks: appliesTo.length,
+        stale: false,
+      });
+
+      // Add cross-references
+      for (const target of appliesTo) {
+        if (validateSlug(target)) {
+          store.addCrossReference(slug, target, "concept applies to");
+        }
+      }
+
+      updateIndex(wikiPath, store);
+
+      const appliesToStr = appliesTo.length > 0 ? "\nApplies to: " + appliesTo.join(", ") : "";
+      return {
+        content: [{ type: "text", text: "Concept created: [[" + slug + "]]\n\n**" + name + "**: " + summary + appliesToStr }],
+        details: { success: true, slug: slug, appliesTo: appliesTo },
+      };
+    },
+  });  // ─── wiki_changelog ───────────────────────────────────────────────────
   pi.registerTool({
     name: "wiki_changelog",
     label: "Wiki Changelog",
@@ -666,14 +818,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         };
       }
 
-      // Group by type
-      const byType: Record<string, GitCommit[]> = {};
-      for (const commit of commits) {
-        const type = commit.type || "other";
-        if (!byType[type]) byType[type] = [];
-        byType[type].push(commit);
-      }
-
+      let changelogContent: string;
       if (format === "keepachangelog") {
         const lines: string[] = [
           `# Changelog`,
@@ -681,6 +826,13 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           `## [Recent] - ${new Date().toISOString().split("T")[0]}`,
           ``,
         ];
+
+        const byType: Record<string, GitCommit[]> = {};
+        for (const commit of commits) {
+          const type = commit.type || "other";
+          if (!byType[type]) byType[type] = [];
+          byType[type].push(commit);
+        }
 
         const typeLabels: Record<string, string> = {
           feat: "### Added",
@@ -702,21 +854,24 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           lines.push("");
         }
 
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-          details: { success: true, commits: commits.length, format },
-        };
+        changelogContent = lines.join("\n");
+      } else {
+        // Plain markdown
+        const lines = commits.map(c => {
+          const scope = c.scope ? `(${c.scope})` : "";
+          return `- \`${c.hash.slice(0, 7)}\` **${c.type}${scope}**: ${c.subject}`;
+        });
+        changelogContent = `# Recent Commits\n\n${lines.join("\n")}`;
       }
 
-      // Plain markdown
-      const lines = commits.map(c => {
-        const scope = c.scope ? `(${c.scope})` : "";
-        return `- \`${c.hash.slice(0, 7)}\` **${c.type}${scope}**: ${c.subject}`;
-      });
+      // Karpathy pattern: persist changelog to wiki
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+      const changelogPath = path.join(wikiPath, "CHANGELOG.md");
+      fs.writeFileSync(changelogPath, changelogContent, "utf-8");
 
       return {
-        content: [{ type: "text", text: `# Recent Commits\n\n${lines.join("\n")}` }],
-        details: { success: true, commits: commits.length },
+        content: [{ type: "text", text: changelogContent }],
+        details: { success: true, commits: commits.length, format, persisted: changelogPath },
       };
     },
   });
@@ -770,9 +925,34 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       lines.push("## See Also");
       lines.push(`- [[${slug}]]`);
 
+      // Karpathy pattern: persist evolution pages to disk
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+      const evolvePath = path.join(wikiPath, "evolution", `${slug}.md`);
+      fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
+      fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
+
+      const store = await ensureInitialized({ cwd: ctx.cwd });
+      if (store) {
+        store.upsertPage({
+          id: `evolution-${slug}`,
+          path: `evolution/${slug}.md`,
+          type: "evolution",
+          title: `Evolution of ${feature}`,
+          summary: `${related.length} commits touch ${feature} over its history`,
+          sourceFiles: related.slice(0, 10).map(c => c.files[0] ?? ""),
+          sourceCommits: related.slice(0, 10).map(c => c.hash),
+          lastIngested: new Date().toISOString(),
+          lastChecked: new Date().toISOString(),
+          inboundLinks: 0,
+          outboundLinks: 0,
+          stale: false,
+        });
+        updateIndex(wikiPath, store);
+      }
+
       return {
         content: [{ type: "text", text: lines.join("\n") }],
-        details: { success: true, feature, commits: related.length },
+        details: { success: true, feature, commits: related.length, persisted: evolvePath },
       };
     },
   });
