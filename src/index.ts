@@ -635,10 +635,10 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       context: Type.String({ description: "What is motivating this decision?" }),
       decision: Type.String({ description: "What is the change being made?" }),
       status: Type.Union([
-        Type.Literal("Proposed"),
-        Type.Literal("Accepted"),
-        Type.Literal("Deprecated"),
-      ], { description: "Decision status", default: "Proposed" }),
+        Type.Literal("proposed"),
+        Type.Literal("accepted"),
+        Type.Literal("deprecated"),
+      ], { description: "Decision status", default: "proposed" }),
       alternatives: Type.Optional(Type.String({ description: "Alternatives considered" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -671,7 +671,8 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       const today = new Date().toISOString().split("T")[0];
 
-      const content = `# ADR-${adrNumber}: ${title}\n\n> **Status**: ${status}\n\n## Context\n${context}\n\n## Decision\n${decision}\n\n## Consequences\n- (to be determined)\n\n## Alternatives Considered\n${alternatives || "- None documented yet"}\n\n## References\n- Created: ${today}\n\n## See Also\n- [[index]]\n`;
+      const displayStatus = status.charAt(0).toUpperCase() + status.slice(1);
+      const content = `# ADR-${adrNumber}: ${title}\n\n> **Status**: ${displayStatus}\n\n## Context\n${context}\n\n## Decision\n${decision}\n\n## Consequences\n- (to be determined)\n\n## Alternatives Considered\n${alternatives || "- None documented yet"}\n\n## References\n- Created: ${today}\n\n## See Also\n- [[index]]\n`;
 
       fs.mkdirSync(path.join(wikiPath, "decisions"), { recursive: true });
       fs.writeFileSync(filePath, content, "utf-8");

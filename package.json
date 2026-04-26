@@ -1,6 +1,6 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
   "keywords": ["pi-package", "wiki", "codebase", "cli", "agent", "kapy"],
   "main": "./src/index.ts",
