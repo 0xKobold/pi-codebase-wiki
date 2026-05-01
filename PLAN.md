@@ -129,53 +129,43 @@ This is the biggest gap between current and LLM Wiki. Right now, "ingest" means 
 
 ---
 
-## Phase 2: Structured LOG.md & Answer Filing (1 day)
+## Phase 2: Structured LOG.md & Answer Filing ✅ DONE
+
+> Committed as `dc62365`
 
 > **Goal**: LOG.md becomes a parseable timeline. Query answers become first-class wiki pages with citations.
 
-The current LOG.md is a markdown table that's hard to parse. The current query filing creates stub pages with match links. Both need to be richer.
-
 ### Tasks
 
-- [ ] **2.1**: Refactor LOG.md to structured format
-  - File: `src/operations/log.ts` (NEW, extracted from `ingest.ts`)
-  - Format: `## [ISO-timestamp] type | title` — machine-parseable with `grep ^## \[`
-  - Each entry includes: source reference, pages created/updated, contradictions detected
-  - `appendToLog(wikiPath, entry: LogEntry)` replaces inline log writing
-  - `parseLog(wikiPath): LogEntry[]` — read structured entries
-  - `getRecentLog(wikiPath, count: number): LogEntry[]` — for status display
+- [x] **2.1**: Refactor LOG.md to structured format
+  - `src/operations/log.ts` — centralized log module
+  - Format: `## [ISO-timestamp] type | source | title` — grep-parseable
+  - `appendToLog`, `parseLog`, `getRecentLog`, `getLogByType`, `getLogSince`, `appendLegacyLog`
+  - `LogEntry` type with contradictions, sourceManifestId, details
 
-- [ ] **2.2**: Update all ingest operations to use structured log
-  - Files: `src/operations/ingest.ts`, `src/index.ts`
-  - `ingestCommits` → append structured log entry
-  - `ingestFileTree` → append structured log entry
-  - `ingestSource` → append structured log entry
-  - `wiki_entity`, `wiki_decision`, `wiki_concept` tools → append log entries
+- [x] **2.2**: Update all ingest operations to use structured log
+  - `ingestCommits` and `ingestFileTree` both log structured entries via dynamic import
+  - `ingestSource` appends structured log via `appendSourceToLog`
 
-- [ ] **2.3**: Enhance query answer filing
-  - File: `src/operations/query.ts`, `src/index.ts`
-  - Instead of a stub with match links, the filed page includes:
-    - YAML frontmatter with source IDs
-    - Synthesized answer (if agent provides one)
-    - "Matched Pages" section with `[[wikilinks]]`
-    - "Open Questions" section
-    - Source attribution (`Sources: src-xxx, src-yyy`)
-  - `wiki_query` tool gets `--file-answer` flag (default true)
+- [x] **2.3**: Enhance query answer filing
+  - Query pages include YAML frontmatter (id, type, matches, sources)
+  - Added Answer and Open Questions sections
+  - Source attribution when match pages have sourceIds
+  - Logs query filing to structured LOG.md
+  - Lowered match threshold from 2 to 1
 
-- [ ] **2.4**: Make LOG.md parseable with unix tools
-  - Ensure every entry starts with `## [` prefix
-  - Add `wiki log` CLI command to query the log
-  - `wiki log --last 5` — show last 5 entries
-  - `wiki log --type ingest` — filter by type
-  - `wiki log --since "2026-04-01"` — date filter
+- [x] **2.4**: Make LOG.md parseable with unix tools
+  - `wiki log` CLI command with `--last`, `--type`, `--since` flags
+  - `appendLegacyLog` bridges old callers to structured format
+  - Contradictions field now correctly parsed in `parseLog`
 
 ### Acceptance Criteria
 
-- LOG.md entries follow `## [timestamp] type | title` format
-- `grep "^## \[" .codebase-wiki/meta/LOG.md | tail -5` shows last 5 entries
-- Query answers include frontmatter, citations, and open questions
-- `wiki log --last 5` works from CLI
-- Existing wikis with old LOG.md format still parse (fallback path)
+- [x] LOG.md entries follow `## [timestamp] type | source | title` format
+- [x] `grep "^## \[" .codebase-wiki/meta/LOG.md | tail -5` shows last 5 entries
+- [x] Query answers include frontmatter, citations, and open questions
+- [x] `wiki log --last 5` works from CLI
+- [x] Existing wikis with old LOG.md format still parse (fallback path)
 
 ---
 
