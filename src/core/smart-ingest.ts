@@ -209,18 +209,6 @@ function analyzeEntityContent(page: WikiPage, rootDir: string, allModules: strin
 }
 
 /**
- * Filter to project-internal dependencies only
- */
-function filterInternal(deps: string[]): string[] {
-  return deps.filter(d => {
-    if (d.startsWith(".") || d.startsWith("/")) return true;
-    if (d.startsWith("@0xkobold/") || d.startsWith("pi-")) return true;
-    if (d.startsWith("@mariozechner/")) return false;
-    return false;
-  });
-}
-
-/**
  * Extract responsibilities from code patterns in a file
  */
 function extractResponsibilities(

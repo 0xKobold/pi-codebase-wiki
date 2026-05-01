@@ -22,12 +22,14 @@ import {
   storeSource,
   generateSourceId,
   computeHash,
-  appendLogEntry,
-  parseLog,
-  getRecentLog,
   createGitSourceManifest,
 } from "../../src/operations/source.js";
 import type { LogEntry } from "../../src/operations/log.js";
+import {
+  appendToLog as appendLogEntry,
+  parseLog,
+  getRecentLog,
+} from "../../src/operations/log.js";
 import { initWiki } from "../../src/operations/ingest.js";
 import { wikiExists, getWikiPath, ensureWikiDirs } from "../../src/core/config.js";
 import { serializeFrontmatter, parseFrontmatter } from "../../src/core/frontmatter.js";
@@ -73,7 +75,7 @@ function teardown(): void {
 // SOURCE ID & HASH
 // ============================================================================
 
-describe.skip("Phase 1: Source ID generation", () => {
+describe("Phase 1: Source ID generation", () => {
   test("generates unique IDs with type prefix", () => {
     const id1 = generateSourceId("article", "OAuth Guide");
     const id2 = generateSourceId("note", "Meeting Notes");
@@ -88,7 +90,7 @@ describe.skip("Phase 1: Source ID generation", () => {
   });
 });
 
-describe.skip("Phase 1: Content hashing", () => {
+describe("Phase 1: Content hashing", () => {
   test("computes SHA-256 hash", () => {
     const hash = computeHash("hello world");
     expect(hash).toMatch(/^[a-f0-9]{64}$/);
@@ -111,7 +113,7 @@ describe.skip("Phase 1: Content hashing", () => {
 // SOURCE STORAGE
 // ============================================================================
 
-describe.skip("Phase 1: Store source", () => {
+describe("Phase 1: Store source", () => {
   beforeEach(setup);
   afterEach(teardown);
 
@@ -160,7 +162,7 @@ describe.skip("Phase 1: Store source", () => {
 // SOURCE INGESTION
 // ============================================================================
 
-describe.skip("Phase 1: Ingest source", () => {
+describe("Phase 1: Ingest source", () => {
   beforeEach(setup);
   afterEach(teardown);
 
@@ -255,7 +257,7 @@ describe.skip("Phase 1: Ingest source", () => {
 // URL INGESTION
 // ============================================================================
 
-describe.skip("Phase 1: Ingest URL", () => {
+describe("Phase 1: Ingest URL", () => {
   beforeEach(setup);
   afterEach(teardown);
 
@@ -277,7 +279,7 @@ describe.skip("Phase 1: Ingest URL", () => {
 // GIT SOURCE MANIFESTS
 // ============================================================================
 
-describe.skip("Phase 1: Git source manifests", () => {
+describe("Phase 1: Git source manifests", () => {
   beforeEach(setup);
   afterEach(teardown);
 
@@ -305,7 +307,7 @@ describe.skip("Phase 1: Git source manifests", () => {
 // STRUCTURED LOG
 // ============================================================================
 
-describe.skip("Phase 1: Structured LOG.md", () => {
+describe("Phase 1: Structured LOG.md", () => {
   beforeEach(setup);
   afterEach(teardown);
 
@@ -406,7 +408,7 @@ describe.skip("Phase 1: Structured LOG.md", () => {
 // FRONTMATTER INTEGRATION
 // ============================================================================
 
-describe.skip("Phase 1: Frontmatter in source pages", () => {
+describe("Phase 1: Frontmatter in source pages", () => {
   beforeEach(setup);
   afterEach(teardown);
 

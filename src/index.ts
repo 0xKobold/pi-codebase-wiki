@@ -25,7 +25,7 @@ import {
   getWikiPath,
   ensureWikiDirs,
 } from "./core/config.js";
-import type { WikiConfig, GitCommit, LintResult } from "./shared.js";
+import type { WikiConfig, GitCommit, LintResult, SourceType } from "./shared.js";
 import { DEFAULT_WIKI_CONFIG, toSlug, formatWikiDate, validateSlug, getDirectoryForPageType } from "./shared.js";
 import {
   initWiki,
@@ -37,6 +37,10 @@ import { enrichAllEntities } from "./core/smart-ingest.js";
 import { generateEnrichmentBatch, formatEnrichmentMessage, type EnrichmentPrompt } from "./core/llm-enrich.js";
 import { searchWiki, getPageContent, getRelatedPages } from "./operations/query.js";
 import { lintWiki, formatLintResult } from "./operations/lint.js";
+import {
+  ingestSource as ingestSourceOp,
+  ingestUrl as ingestUrlOp,
+} from "./operations/source.js";
 import {
   getRecentCommits,
   getAllCommits,
@@ -1216,7 +1220,6 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       // Re-run ingest with 0 commits to trigger index rebuild
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
-      const { updateIndex } = await import("./operations/ingest.js");
       updateIndex(wikiPath, store);
 
       ctx.ui.notify("✅ Wiki index rebuilt.", "info");
@@ -1272,8 +1275,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
 
-      const { ingestSource } = await import("./operations/source.js");
-      const result = ingestSource(wikiPath, ctx.cwd, type as any, title, content, store, {
+      const result = ingestSourceOp(wikiPath, ctx.cwd, type as SourceType, title, content, store, {
         url,
         pageType,
         updateExisting,
@@ -1287,7 +1289,6 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       // Update the index after creating pages
-      const { updateIndex } = await import("./operations/ingest.js");
       updateIndex(wikiPath, store);
 
       return {
@@ -1331,8 +1332,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       _onUpdate?.({ content: [{ type: "text", text: `📖 Fetching ${url}...` }], details: {} });
 
-      const { ingestUrl } = await import("./operations/source.js");
-      const result = await ingestUrl(wikiPath, ctx.cwd, url, store, { title, pageType });
+      const result = await ingestUrlOp(wikiPath, ctx.cwd, url, store, { title, pageType });
 
       if (result.errors.length > 0) {
         return {
@@ -1341,7 +1341,6 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         };
       }
 
-      const { updateIndex } = await import("./operations/ingest.js");
       updateIndex(wikiPath, store);
 
       return {
