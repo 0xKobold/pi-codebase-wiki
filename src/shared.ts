@@ -3,6 +3,9 @@
  *
  * Common types, constants, and utility functions for the codebase wiki system.
  * Follows NASA-10 coding rules: small functions, minimal scope, validation.
+ *
+ * v2: PageType is now a string (configurable via PageTypeConfig).
+ * Source manifests track arbitrary content, not just git.
  */
 
 import * as fs from "fs";
@@ -11,10 +14,38 @@ import * as fs from "fs";
 // TYPES
 // ============================================================================
 
-/** Wiki page types */
-export type PageType = "entity" | "concept" | "decision" | "evolution" | "comparison" | "query" | "changelog" | "index" | "schema";
+/** Wiki page type — now configurable, not a fixed union */
+export type PageType = string;
 
-/** Ingest source types */
+/** Built-in page types for backward compatibility */
+export const BUILTIN_PAGE_TYPES: string[] = [
+  "entity", "concept", "decision", "evolution", "comparison",
+  "query", "changelog", "index", "schema",
+] as const;
+
+/** Page type configuration — defines directories, templates, and validation */
+export interface PageTypeConfig {
+  id: string;                    // kebab-case type ID (e.g., "entity", "person", "chapter")
+  name: string;                  // Display name (e.g., "Entity", "Person", "Chapter")
+  directory: string;             // Subdirectory under wiki root (e.g., "entities", "people")
+  template: string;              // Template filename in templates/ (e.g., "entity.md")
+  requiredSections: string[];    // Sections that must exist on pages of this type
+  sourceTypes?: SourceType[];    // Which source types can create this page type
+  icon?: string;                 // Emoji for UI display
+}
+
+/** Source type — what kind of raw content was ingested */
+export type SourceType =
+  | "git-commits"         // Batch of git commits (existing)
+  | "article"             // Web article, PDF, blog post
+  | "note"                // Personal note, journal entry
+  | "conversation"        // Chat transcript, meeting notes
+  | "document"            // README, spec, design doc
+  | "url"                 // Fetched web resource
+  | "media"               // Image, diagram, video transcript
+  | "manual";             // Manual entry by user
+
+/** Legacy IngestSourceType — maps to new SourceType for backward compat */
 export type IngestSourceType = "commit" | "file" | "docs" | "manual" | "full-tree";
 
 /** Lint issue severity */
@@ -30,6 +61,18 @@ export type LintIssueType =
   | "duplicate"
   | "empty_section";
 
+/** Source manifest — tracks an ingested raw source */
+export interface SourceManifest {
+  id: string;                     // UUID
+  type: SourceType;               // What kind of source
+  title: string;                  // Human-readable title
+  path: string;                   // Relative to .codebase-wiki/sources/
+  hash: string;                   // SHA-256 of file contents (immutability check)
+  ingestedAt: string;             // ISO timestamp
+  pagesCreated: string[];         // Page IDs created/updated from this source
+  metadata: Record<string, any>; // Type-specific metadata
+}
+
 /** Wiki page record */
 export interface WikiPage {
   id: string;                     // kebab-case slug
@@ -39,11 +82,13 @@ export interface WikiPage {
   summary: string;                 // first paragraph
   sourceFiles: string[];          // source file paths this page derives from
   sourceCommits: string[];        // commit hashes this page derives from
+  sourceIds?: string[];           // references to SourceManifest IDs
   lastIngested: string;           // ISO timestamp
   lastChecked: string;            // last staleness check
   inboundLinks: number;
   outboundLinks: number;
   stale: boolean;
+  metadata?: Record<string, any>; // extensible metadata from frontmatter
 }
 
 /** Ingest log entry */
@@ -100,6 +145,17 @@ export interface IngestConfig {
   excludePatterns: string[];      // default: ["node_modules", "dist", ".git"]
 }
 
+/** Ingestion workflow mode */
+export type IngestionMode = "auto" | "confirm" | "guided";
+
+/** Ingestion confirmation thresholds */
+export interface IngestionThresholds {
+  newPageCreation: boolean;           // Ask before creating new pages (default: false)
+  pageDeletion: boolean;              // Ask before deleting/merging pages (default: true)
+  contradictionResolution: boolean;  // Ask before resolving contradictions (default: true)
+  crossReferenceUpdate: boolean;     // Ask for cross-ref updates (default: false)
+}
+
 /** Extension configuration */
 export interface WikiConfig {
   autoIngest: boolean;            // default: false
@@ -110,6 +166,10 @@ export interface WikiConfig {
   importantCommitTypes: string[];
   excludeCommitPatterns: string[];
   wikiDir: string;                // default: ".codebase-wiki"
+  domain: string;                // default: "codebase"
+  pageTypes: PageTypeConfig[];   // default: DEFAULT_PAGE_TYPES
+  ingestionMode: IngestionMode;  // default: "auto"
+  ingestionThresholds: IngestionThresholds; // default: auto (no confirmations)
 }
 
 /** Git commit info */
@@ -138,17 +198,74 @@ export interface FileEntry {
 
 export const DEFAULT_WIKI_DIR = ".codebase-wiki";
 
-export const PAGE_TYPE_DIR: Record<PageType, string> = {
-  entity: "entities",
-  concept: "concepts",
-  decision: "decisions",
-  evolution: "evolution",
-  comparison: "comparisons",
-  query: "queries",
-  changelog: "",
-  index: "",
-  schema: "",
-} as const;
+/** Default page type configurations for codebase wikis */
+export const DEFAULT_PAGE_TYPES: PageTypeConfig[] = [
+  { id: "entity",    name: "Entity",    directory: "entities",   template: "entity.md",    requiredSections: ["Summary", "See Also"], sourceTypes: ["git-commits", "document"], icon: "📦" },
+  { id: "concept",   name: "Concept",   directory: "concepts",   template: "concept.md",   requiredSections: ["Summary", "See Also"], sourceTypes: ["article", "note", "conversation"], icon: "💡" },
+  { id: "decision",  name: "Decision",  directory: "decisions",  template: "decision.md",  requiredSections: ["Context", "Decision", "Consequences"], sourceTypes: ["git-commits", "conversation", "manual"], icon: "⚖️" },
+  { id: "evolution", name: "Evolution", directory: "evolution",   template: "evolution.md", requiredSections: ["Timeline", "Current State"], sourceTypes: ["git-commits"], icon: "📈" },
+  { id: "comparison",name: "Comparison",directory: "comparisons", template: "comparison.md",requiredSections: ["Comparison", "Recommendation"], sourceTypes: ["article", "note"], icon: "⚖️" },
+  { id: "query",    name: "Query",     directory: "queries",    template: "query.md",     requiredSections: ["Matched Pages"], sourceTypes: ["manual"], icon: "🔍" },
+  { id: "changelog", name: "Changelog", directory: "",           template: "",            requiredSections: [], icon: "📋" },
+  { id: "index",    name: "Index",     directory: "",           template: "",            requiredSections: [], icon: "📖" },
+  { id: "schema",   name: "Schema",    directory: "",           template: "",            requiredSections: [], icon: "📜" },
+];
+
+/** Domain preset page type configurations */
+export const DOMAIN_PRESETS: Record<string, { name: string; description: string; pageTypes: PageTypeConfig[]; sourceTypes: SourceType[] }> = {
+  codebase: {
+    name: "Codebase",
+    description: "Software project knowledge base (default)",
+    pageTypes: DEFAULT_PAGE_TYPES,
+    sourceTypes: ["git-commits", "document", "url"],
+  },
+  personal: {
+    name: "Personal",
+    description: "Personal knowledge base — goals, notes, insights",
+    pageTypes: [
+      { id: "person",   name: "Person",   directory: "people",     template: "person.md",    requiredSections: ["Summary", "See Also"], sourceTypes: ["note", "conversation"], icon: "👤" },
+      { id: "topic",    name: "Topic",    directory: "topics",      template: "topic.md",     requiredSections: ["Summary", "Key Ideas"], sourceTypes: ["article", "note", "url"], icon: "💡" },
+      { id: "insight",  name: "Insight",  directory: "insights",    template: "insight.md",   requiredSections: ["Summary", "Connections"], sourceTypes: ["note", "conversation"], icon: "⚡" },
+      { id: "media",    name: "Media",    directory: "media",       template: "media.md",    requiredSections: ["Summary", "Takeaways"], sourceTypes: ["url", "media"], icon: "🎬" },
+      { id: "habit",    name: "Habit",    directory: "habits",       template: "habit.md",     requiredSections: ["Summary", "Tracking"], sourceTypes: ["note", "manual"], icon: "🔄" },
+    ],
+    sourceTypes: ["note", "article", "conversation", "url", "media", "manual"],
+  },
+  research: {
+    name: "Research",
+    description: "Research paper and topic knowledge base",
+    pageTypes: [
+      { id: "paper",    name: "Paper",    directory: "papers",      template: "paper.md",     requiredSections: ["Summary", "Key Findings"], sourceTypes: ["url", "document"], icon: "📄" },
+      { id: "concept",   name: "Concept",   directory: "concepts",   template: "concept.md",   requiredSections: ["Summary", "See Also"], sourceTypes: ["article", "note"], icon: "💡" },
+      { id: "finding",  name: "Finding",  directory: "findings",   template: "finding.md",   requiredSections: ["Summary", "Evidence"], sourceTypes: ["article", "note"], icon: "🔬" },
+      { id: "method",    name: "Method",    directory: "methods",    template: "method.md",    requiredSections: ["Summary", "Steps"], sourceTypes: ["document", "note"], icon: "🧪" },
+      { id: "comparison",name: "Comparison",directory: "comparisons", template: "comparison.md",requiredSections: ["Comparison", "Recommendation"], sourceTypes: ["article", "note"], icon: "⚖️" },
+    ],
+    sourceTypes: ["article", "document", "url", "note"],
+  },
+  book: {
+    name: "Book",
+    description: "Book reading companion — characters, themes, chapters",
+    pageTypes: [
+      { id: "character", name: "Character", directory: "characters", template: "character.md", requiredSections: ["Summary", "Arc"], sourceTypes: ["note", "manual"], icon: "🧑" },
+      { id: "theme",     name: "Theme",     directory: "themes",     template: "theme.md",      requiredSections: ["Summary", "Examples"], sourceTypes: ["note", "manual"], icon: "🎯" },
+      { id: "chapter",   name: "Chapter",  directory: "chapters",  template: "chapter.md",    requiredSections: ["Summary", "Key Events"], sourceTypes: ["note", "manual"], icon: "📖" },
+      { id: "location",  name: "Location",  directory: "locations",  template: "location.md",   requiredSections: ["Summary", "Significance"], sourceTypes: ["note", "manual"], icon: "📍" },
+      { id: "quote",     name: "Quote",     directory: "quotes",     template: "quote.md",      requiredSections: ["Quote", "Context"], sourceTypes: ["note", "manual"], icon: "💬" },
+    ],
+    sourceTypes: ["note", "manual", "url"],
+  },
+};
+
+/**
+ * Get the directory for a page type from config.
+ * Falls back to DEFAULT_PAGE_TYPES if config is not loaded.
+ */
+export function getDirectoryForPageType(type: string, pageTypes?: PageTypeConfig[]): string {
+  const configs = pageTypes ?? DEFAULT_PAGE_TYPES;
+  const config = configs.find(pt => pt.id === type);
+  return config?.directory ?? type + "s"; // fallback: entity → entities
+}
 
 export const COMMIT_TYPES = [
   { type: "feat", desc: "A new feature" },
@@ -182,6 +299,15 @@ export const DEFAULT_WIKI_CONFIG: WikiConfig = {
   importantCommitTypes: ["feat", "fix", "refactor", "breaking"],
   excludeCommitPatterns: ["chore: update deps", "docs: typos"],
   wikiDir: DEFAULT_WIKI_DIR,
+  domain: "codebase",
+  pageTypes: DEFAULT_PAGE_TYPES,
+  ingestionMode: "auto",
+  ingestionThresholds: {
+    newPageCreation: false,
+    pageDeletion: true,
+    contradictionResolution: true,
+    crossReferenceUpdate: false,
+  },
 };
 
 // ============================================================================

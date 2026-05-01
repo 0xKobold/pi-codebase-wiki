@@ -7,8 +7,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import type { WikiConfig, IngestConfig } from "../shared.js";
-import { DEFAULT_WIKI_DIR, DEFAULT_WIKI_CONFIG, DEFAULT_INGEST_CONFIG } from "../shared.js";
+import type { WikiConfig, IngestConfig, PageTypeConfig } from "../shared.js";
+import { DEFAULT_WIKI_DIR, DEFAULT_WIKI_CONFIG, DEFAULT_INGEST_CONFIG, DEFAULT_PAGE_TYPES, getDirectoryForPageType } from "../shared.js";
 
 // ============================================================================
 // CONFIG LOADING
@@ -60,20 +60,34 @@ export function getWikiPath(rootDir: string, wikiDir: string = DEFAULT_WIKI_DIR)
 /**
  * Ensure wiki directory structure exists
  */
-export function ensureWikiDirs(rootDir: string, wikiDir: string = DEFAULT_WIKI_DIR): string {
+export function ensureWikiDirs(rootDir: string, wikiDir: string = DEFAULT_WIKI_DIR, pageTypes?: PageTypeConfig[]): string {
   const wikiPath = getWikiPath(rootDir, wikiDir);
+  const types = pageTypes ?? DEFAULT_PAGE_TYPES;
 
   const dirs = [
     wikiPath,
-    path.join(wikiPath, "entities"),
-    path.join(wikiPath, "concepts"),
-    path.join(wikiPath, "decisions"),
-    path.join(wikiPath, "evolution"),
-    path.join(wikiPath, "comparisons"),
-    path.join(wikiPath, "queries"),
-    path.join(wikiPath, "templates"),
     path.join(wikiPath, "meta"),
+    path.join(wikiPath, "templates"),
   ];
+
+  // Add directories for each page type (skip empty directories for index/schema/changelog)
+  for (const pt of types) {
+    if (pt.directory) {
+      dirs.push(path.join(wikiPath, pt.directory));
+    }
+  }
+
+  // Add sources directory structure
+  dirs.push(
+    path.join(wikiPath, "sources", "git-commits"),
+    path.join(wikiPath, "sources", "articles"),
+    path.join(wikiPath, "sources", "notes"),
+    path.join(wikiPath, "sources", "conversations"),
+    path.join(wikiPath, "sources", "documents"),
+    path.join(wikiPath, "sources", "urls"),
+    path.join(wikiPath, "sources", "media"),
+    path.join(wikiPath, "sources", "manual"),
+  );
 
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) {

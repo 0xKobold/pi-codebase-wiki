@@ -6,7 +6,7 @@
  */
 
 export { WikiStore } from "./store.js";
-export type { WikiPage, IngestLog, CrossReference, LintResult, LintIssue } from "../shared.js";
+export type { WikiPage, IngestLog, CrossReference, LintResult, LintIssue, PageTypeConfig, SourceManifest, SourceType } from "../shared.js";
 
 export {
   loadConfig,
@@ -48,3 +48,5 @@ export { extractImports, extractExports, resolveImportToSlug, buildCrossReferenc
 export type { DependencyInfo } from "./deps.js";
 
 export { scanFileTree } from "./indexer.js";
+
+export { parseFrontmatter, serializeFrontmatter, stripFrontmatter, hasFrontmatter, readFileMetadata, writeFileMetadata } from "./frontmatter.js";

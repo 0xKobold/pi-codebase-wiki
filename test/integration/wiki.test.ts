@@ -17,7 +17,7 @@ import {
 } from "../../src/operations/ingest.js";
 import { searchWiki, getPageContent, getRelatedPages } from "../../src/operations/query.js";
 import { lintWiki, formatLintResult } from "../../src/operations/lint.js";
-import type { WikiPage, WikiConfig } from "../../src/shared.js";
+import type { WikiPage, WikiConfig, SourceManifest } from "../../src/shared.js";
 import { DEFAULT_WIKI_CONFIG } from "../../src/shared.js";
 import {
   wikiExists,
@@ -662,5 +662,149 @@ describe("Re-ingest Data Preservation", () => {
       [...existingContent.matchAll(/Commit: `([a-f0-9]{7,40})`/g)].map(m => m[1]!.slice(0, 7))
     );
     expect(existingHashes.has("abc1234")).toBe(true);
+  });
+});
+
+// ============================================================================
+// PHASE 0: FOUNDATION REFACTOR TESTS
+// ============================================================================
+
+describe("Phase 0: Source manifests and frontmatter integration", () => {
+  let phase0Dir: string;
+  let phase0Store: WikiStore;
+
+  beforeEach(async () => {
+    phase0Dir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-phase0-"));
+    fs.mkdirSync(path.join(phase0Dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(phase0Dir, "package.json"), JSON.stringify({ name: "phase0-test" }));
+    fs.writeFileSync(path.join(phase0Dir, "README.md"), "# Phase 0 Test");
+
+    // Init git
+    try {
+      const { execSync } = require("child_process");
+      execSync("git init", { cwd: phase0Dir, stdio: "pipe" });
+      execSync("git add .", { cwd: phase0Dir, stdio: "pipe" });
+      execSync('git -c user.name="test" -c user.email="t@t.com" commit -m "feat: init"', { cwd: phase0Dir, stdio: "pipe" });
+    } catch {}
+
+    const wikiDir = DEFAULT_WIKI_CONFIG.wikiDir;
+    const dbPath = path.join(phase0Dir, wikiDir, "meta", "wiki.db");
+    phase0Store = new WikiStore(dbPath);
+    await phase0Store.init();
+  });
+
+  afterEach(() => {
+    phase0Store.close();
+    fs.rmSync(phase0Dir, { recursive: true, force: true });
+  });
+
+  test("source manifest CRUD", () => {
+    const manifest = {
+      id: "src-article-oauth",
+      type: "article" as const,
+      title: "Understanding OAuth 2.0",
+      path: "sources/articles/src-article-oauth.md",
+      hash: "abc123def456789",
+      ingestedAt: new Date().toISOString(),
+      pagesCreated: ["oauth-flow"],
+      metadata: { url: "https://example.com/oauth" },
+    };
+
+    phase0Store.addSource(manifest);
+
+    const retrieved = phase0Store.getSource("src-article-oauth");
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.title).toBe("Understanding OAuth 2.0");
+    expect(retrieved!.type).toBe("article");
+    expect(retrieved!.pagesCreated).toEqual(["oauth-flow"]);
+  });
+
+  test("getSources filters by type", () => {
+    phase0Store.addSource({
+      id: "src-1", type: "article", title: "Article 1",
+      path: "s/1.md", hash: "h1", ingestedAt: new Date().toISOString(),
+      pagesCreated: [], metadata: {},
+    });
+    phase0Store.addSource({
+      id: "src-2", type: "git-commits", title: "Commits",
+      path: "s/2.json", hash: "h2", ingestedAt: new Date().toISOString(),
+      pagesCreated: [], metadata: {},
+    });
+    phase0Store.addSource({
+      id: "src-3", type: "article", title: "Article 2",
+      path: "s/3.md", hash: "h3", ingestedAt: new Date().toISOString(),
+      pagesCreated: [], metadata: {},
+    });
+
+    const articles = phase0Store.getSources("article");
+    expect(articles.length).toBe(2);
+
+    const all = phase0Store.getSources();
+    expect(all.length).toBe(3);
+  });
+
+  test("source count stats", () => {
+    phase0Store.addSource({
+      id: "src-a", type: "article", title: "A",
+      path: "s/a.md", hash: "ha", ingestedAt: new Date().toISOString(),
+      pagesCreated: [], metadata: {},
+    });
+    phase0Store.addSource({
+      id: "src-b", type: "note", title: "B",
+      path: "s/b.md", hash: "hb", ingestedAt: new Date().toISOString(),
+      pagesCreated: [], metadata: {},
+    });
+
+    const count = phase0Store.getSourceCount();
+    expect(count.total).toBe(2);
+    expect(count.byType.article).toBe(1);
+    expect(count.byType.note).toBe(1);
+  });
+
+  test("WikiPage with sourceIds and metadata", () => {
+    const page: WikiPage = {
+      id: "oauth-flow",
+      path: "entities/oauth-flow.md",
+      type: "entity",
+      title: "OAuth Flow",
+      summary: "OAuth 2.0 authorization flow",
+      sourceFiles: ["src/auth/oauth.ts"],
+      sourceCommits: ["abc123"],
+      sourceIds: ["src-article-oauth", "src-commits-2026-04"],
+      lastIngested: new Date().toISOString(),
+      lastChecked: new Date().toISOString(),
+      inboundLinks: 0,
+      outboundLinks: 0,
+      stale: false,
+      metadata: { domain: "auth", confidence: "high" },
+    };
+
+    phase0Store.upsertPage(page);
+
+    const retrieved = phase0Store.getPage("oauth-flow");
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.sourceIds).toEqual(["src-article-oauth", "src-commits-2026-04"]);
+    expect(retrieved!.metadata.domain).toBe("auth");
+    expect(retrieved!.metadata.confidence).toBe("high");
+  });
+
+  test("migration adds columns to existing database", async () => {
+    // Create a minimal DB without new columns (simulating old DB)
+    const db = (phase0Store as any).db;
+    // Insert a page using old schema (without source_ids/metadata)
+    db.run(
+      `INSERT INTO wiki_pages (id, path, type, title, summary, source_files, source_commits, last_ingested, last_checked, inbound_links, outbound_links, stale)
+       VALUES ('legacy-page', 'entities/legacy.md', 'entity', 'Legacy', 'old page', '[]', '[]', ?, ?, 0, 0, 0)`,
+      [new Date().toISOString(), new Date().toISOString()]
+    );
+
+    // Run migration (should add columns)
+    (phase0Store as any).runMigrations();
+
+    // Should be able to read the page with defaults
+    const page = phase0Store.getPage("legacy-page");
+    expect(page).not.toBeNull();
+    expect(page!.sourceIds).toEqual([]);
+    expect(page!.metadata).toEqual({});
   });
 });

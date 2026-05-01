@@ -14,6 +14,8 @@ import type {
   CrossReference,
   StalenessCheck,
   PageType,
+  SourceManifest,
+  SourceType,
 } from "../shared.js";
 import { generateId } from "../shared.js";
 
@@ -87,6 +89,8 @@ export class WikiStore {
         summary TEXT DEFAULT '',
         source_files TEXT DEFAULT '[]',
         source_commits TEXT DEFAULT '[]',
+        source_ids TEXT DEFAULT '[]',
+        metadata TEXT DEFAULT '{}',
         last_ingested TEXT NOT NULL,
         last_checked TEXT NOT NULL,
         inbound_links INTEGER DEFAULT 0,
@@ -129,12 +133,49 @@ export class WikiStore {
     this.db!.run("CREATE INDEX IF NOT EXISTS idx_pages_stale ON wiki_pages(stale)");
     this.db!.run("CREATE INDEX IF NOT EXISTS idx_ingest_timestamp ON ingest_log(timestamp)");
     this.db!.run("CREATE INDEX IF NOT EXISTS idx_crossref_from ON cross_references(from_page)");
-    this.db!.run("CREATE INDEX IF NOT EXISTS idx_crossref_to ON cross_references(to_page)");
+    this.db!.run(`
+      CREATE TABLE IF NOT EXISTS source_manifests (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        path TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        ingested_at TEXT NOT NULL,
+        pages_created TEXT DEFAULT '[]',
+        metadata TEXT DEFAULT '{}'
+      );
+    `);
+
+    this.db!.run("CREATE INDEX IF NOT EXISTS idx_sources_type ON source_manifests(type)");
+    this.db!.run("CREATE INDEX IF NOT EXISTS idx_sources_ingested ON source_manifests(ingested_at)");
   }
 
   private runMigrations(): void {
-    // Future schema migrations go here
-    // v0.2: ALTER TABLE wiki_pages ADD COLUMN ...
+    // v0.7: Add source_ids and metadata columns to wiki_pages
+    try {
+      this.db!.run("ALTER TABLE wiki_pages ADD COLUMN source_ids TEXT DEFAULT '[]'");
+    } catch { /* column already exists */ }
+    try {
+      this.db!.run("ALTER TABLE wiki_pages ADD COLUMN metadata TEXT DEFAULT '{}'");
+    } catch { /* column already exists */ }
+
+    // v0.7: Add source_manifests table
+    try {
+      this.db!.run(`
+        CREATE TABLE IF NOT EXISTS source_manifests (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          path TEXT NOT NULL,
+          hash TEXT NOT NULL,
+          ingested_at TEXT NOT NULL,
+          pages_created TEXT DEFAULT '[]',
+          metadata TEXT DEFAULT '{}'
+        )
+      `);
+      this.db!.run("CREATE INDEX IF NOT EXISTS idx_sources_type ON source_manifests(type)");
+      this.db!.run("CREATE INDEX IF NOT EXISTS idx_sources_ingested ON source_manifests(ingested_at)");
+    } catch { /* table already exists */ }
   }
 
   // ============================================================================
@@ -186,14 +227,14 @@ export class WikiStore {
 
     this.db!.run(
       `INSERT INTO wiki_pages (id, path, type, title, summary, source_files, source_commits,
-        last_ingested, last_checked, inbound_links, outbound_links, stale)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_ids, metadata, last_ingested, last_checked, inbound_links, outbound_links, stale)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
-        path=excluded.path, type=excluded.type, title=excluded.title,
-        summary=excluded.summary, source_files=excluded.source_files,
-        source_commits=excluded.source_commits, last_ingested=excluded.last_ingested,
-        last_checked=excluded.last_checked, inbound_links=excluded.inbound_links,
-        outbound_links=excluded.outbound_links, stale=excluded.stale`,
+        path=excluded.path, type=excluded.type, title=excluded.title, summary=excluded.summary,
+        source_files=excluded.source_files, source_commits=excluded.source_commits,
+        source_ids=excluded.source_ids, metadata=excluded.metadata,
+        last_ingested=excluded.last_ingested, last_checked=excluded.last_checked,
+        inbound_links=excluded.inbound_links, outbound_links=excluded.outbound_links, stale=excluded.stale`,
       [
         page.id,
         page.path,
@@ -202,6 +243,8 @@ export class WikiStore {
         page.summary ?? "",
         JSON.stringify(page.sourceFiles ?? []),
         JSON.stringify(page.sourceCommits ?? []),
+        JSON.stringify(page.sourceIds ?? []),
+        JSON.stringify(page.metadata ?? {}),
         page.lastIngested,
         page.lastChecked,
         page.inboundLinks ?? 0,
@@ -408,6 +451,72 @@ export class WikiStore {
   }
 
   // ============================================================================
+  // SOURCE MANIFESTS
+  // ============================================================================
+
+  addSource(manifest: SourceManifest): void {
+    console.assert(manifest !== null, "manifest must not be null");
+    console.assert(manifest.id.length > 0, "manifest id must not be empty");
+
+    this.db!.run(
+      `INSERT INTO source_manifests (id, type, title, path, hash, ingested_at, pages_created, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+        type=excluded.type, title=excluded.title, path=excluded.path,
+        hash=excluded.hash, pages_created=excluded.pages_created, metadata=excluded.metadata`,
+      [
+        manifest.id,
+        manifest.type,
+        manifest.title,
+        manifest.path,
+        manifest.hash,
+        manifest.ingestedAt,
+        JSON.stringify(manifest.pagesCreated),
+        JSON.stringify(manifest.metadata),
+      ]
+    );
+    this.scheduleSave();
+  }
+
+  getSource(id: string): SourceManifest | null {
+    console.assert(typeof id === "string", "id must be string");
+
+    const result = this.db!.exec("SELECT * FROM source_manifests WHERE id = ?", [id]);
+    if (result.length === 0 || result[0]!.values.length === 0) return null;
+
+    return rowToSourceManifest(result[0]!.values[0]!);
+  }
+
+  getSources(type?: string): SourceManifest[] {
+    let sql = "SELECT * FROM source_manifests ORDER BY ingested_at DESC";
+    let params: any[] = [];
+
+    if (type) {
+      sql = "SELECT * FROM source_manifests WHERE type = ? ORDER BY ingested_at DESC";
+      params = [type];
+    }
+
+    const result = this.db!.exec(sql, params);
+    if (result.length === 0) return [];
+    return result[0]!.values.map(row => rowToSourceManifest(row));
+  }
+
+  getSourceCount(): { total: number; byType: Record<string, number> } {
+    const totalResult = this.db!.exec("SELECT COUNT(*) FROM source_manifests");
+    const total = totalResult.length > 0 ? (totalResult[0]!.values[0]![0] as number) : 0;
+
+    const typeResult = this.db!.exec("SELECT type, COUNT(*) FROM source_manifests GROUP BY type");
+    const byType: Record<string, number> = {};
+    if (typeResult.length > 0) {
+      for (const row of typeResult[0]!.values) {
+        byType[row[0] as string] = row[1] as number;
+      }
+    }
+
+    return { total, byType };
+  }
+
+  // ============================================================================
   // STATS
   // ============================================================================
 
@@ -449,16 +558,18 @@ function rowToPage(row: (string | number | null | Uint8Array)[]): WikiPage {
   return {
     id: row[0] as string,
     path: row[1] as string,
-    type: row[2] as PageType,
+    type: row[2] as string,
     title: row[3] as string,
     summary: (row[4] as string) ?? "",
     sourceFiles: JSON.parse((row[5] as string) || "[]"),
     sourceCommits: JSON.parse((row[6] as string) || "[]"),
-    lastIngested: row[7] as string,
-    lastChecked: row[8] as string,
-    inboundLinks: (row[9] as number) ?? 0,
-    outboundLinks: (row[10] as number) ?? 0,
-    stale: (row[11] as number) === 1,
+    sourceIds: JSON.parse((row[7] as string) || "[]"),
+    metadata: JSON.parse((row[8] as string) || "{}"),
+    lastIngested: row[9] as string,
+    lastChecked: row[10] as string,
+    inboundLinks: (row[11] as number) ?? 0,
+    outboundLinks: (row[12] as number) ?? 0,
+    stale: (row[13] as number) === 1,
   };
 }
 
@@ -470,5 +581,18 @@ function rowToIngestLog(row: (string | number | null | Uint8Array)[]): IngestLog
     pagesCreated: row[3] as number,
     pagesUpdated: row[4] as number,
     timestamp: row[5] as string,
+  };
+}
+
+function rowToSourceManifest(row: (string | number | null | Uint8Array)[]): SourceManifest {
+  return {
+    id: row[0] as string,
+    type: row[1] as SourceType,
+    title: row[2] as string,
+    path: row[3] as string,
+    hash: row[4] as string,
+    ingestedAt: row[5] as string,
+    pagesCreated: JSON.parse((row[6] as string) || "[]"),
+    metadata: JSON.parse((row[7] as string) || "{}"),
   };
 }

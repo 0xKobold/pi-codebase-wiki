@@ -8,8 +8,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { GitCommit } from "../shared.js";
-import { toSlug, formatWikiDate } from "../shared.js";
-import { PAGE_TYPE_DIR } from "../shared.js";
+import { toSlug, formatWikiDate, getDirectoryForPageType, DEFAULT_PAGE_TYPES } from "../shared.js";
+import type { PageTypeConfig } from "../shared.js";
 import type { WikiStore } from "../core/store.js";
 import type { ModuleInfo } from "../core/indexer.js";
 import {
