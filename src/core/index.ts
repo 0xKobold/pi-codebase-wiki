@@ -21,7 +21,11 @@ export {
   generateEvolutionTemplate,
   generateConceptTemplate,
   generateComparisonTemplate,
+  loadPageTypes,
+  loadDomain,
 } from "./config.js";
+
+export { getTemplateForPageType, getTemplatesForPageTypes } from "./templates.js";
 
 export {
   getRecentCommits,

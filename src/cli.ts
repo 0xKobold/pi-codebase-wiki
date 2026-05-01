@@ -43,7 +43,7 @@ import {
   getCurrentBranch,
   getLatestHash,
 } from "./core/index.js";
-import { toSlug, validateSlug, formatWikiDate, getDirectoryForPageType } from "./shared.js";
+import { toSlug, validateSlug, formatWikiDate, getDirectoryForPageType, DOMAIN_PRESETS, DEFAULT_PAGE_TYPES } from "./shared.js";
 import type { PageType } from "./shared.js";
 import type { WikiConfig, GitCommit } from "./shared.js";
 
@@ -81,7 +81,7 @@ function closeStore(store: WikiStore | null): void {
 kapy()
   // ─── init ────────────────────────────────────────────────────────────
   .command("init", {
-    description: "Initialize the codebase wiki for the current project",
+    description: "Initialize the wiki for the current project",
     args: [],
     flags: {
       dir: {
@@ -89,10 +89,23 @@ kapy()
         alias: "d",
         description: "Wiki directory name (default: .codebase-wiki)",
       },
+      domain: {
+        type: "string",
+        alias: "D",
+        description: "Wiki domain preset: codebase (default), personal, research, book",
+      },
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
     const wikiDir = (ctx.args.dir as string) || ".codebase-wiki";
+    const domain = (ctx.args.domain as string) || "codebase";
+
+    // Resolve domain preset
+    const preset = DOMAIN_PRESETS[domain];
+    if (domain !== "codebase" && !preset) {
+      ctx.error(`Unknown domain preset: ${domain}. Available: ${Object.keys(DOMAIN_PRESETS).join(", ")}`);
+      process.exit(1);
+    }
 
     if (wikiExists(rootDir, wikiDir)) {
       ctx.log(`📖 Wiki already exists at ${wikiDir}`);
@@ -102,8 +115,9 @@ kapy()
       return;
     }
 
-    const config = { ...DEFAULT_CONFIG, wikiDir };
-    const wikiPath = ensureWikiDirs(rootDir, wikiDir);
+    const pageTypes = preset?.pageTypes ?? DEFAULT_PAGE_TYPES;
+    const config = { ...DEFAULT_CONFIG, wikiDir, domain, pageTypes };
+    const wikiPath = ensureWikiDirs(rootDir, wikiDir, pageTypes);
     const dbPath = path.join(wikiPath, "meta", "wiki.db");
     const store = new WikiStore(dbPath);
     await store.init();
@@ -111,13 +125,15 @@ kapy()
     initWiki(rootDir, config, store);
     store.close();
 
-    ctx.log(`📖 Wiki initialized at ${wikiDir}`);
+    ctx.log(`📖 ${preset?.name ?? "Codebase"} wiki initialized at ${wikiDir}`);
+    ctx.log(`Domain: ${domain} — ${pageTypes.length} page types configured`);
     ctx.log(`Run \`wiki ingest all\` to populate it.`);
 
     if (ctx.args.json) {
-      console.log(JSON.stringify({ initialized: true, path: wikiDir }));
+      console.log(JSON.stringify({ initialized: true, path: wikiDir, domain, pageTypes: pageTypes.map(pt => pt.id) }));
     }
   })
+
 
   // ─── ingest ───────────────────────────────────────────────────────────
   .command("ingest", {

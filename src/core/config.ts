@@ -7,7 +7,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import type { WikiConfig, IngestConfig, PageTypeConfig } from "../shared.js";
+import type { WikiConfig, IngestConfig, PageTypeConfig, SourceType } from "../shared.js";
 import { DEFAULT_WIKI_DIR, DEFAULT_WIKI_CONFIG, DEFAULT_INGEST_CONFIG, DEFAULT_PAGE_TYPES, getDirectoryForPageType } from "../shared.js";
 
 // ============================================================================
@@ -36,6 +36,75 @@ export function loadIngestConfig(overrides?: Partial<IngestConfig>): IngestConfi
     ...DEFAULT_INGEST_CONFIG,
     ...overrides,
   };
+}
+
+// ============================================================================
+// SCHEMA PAGE TYPE PARSING
+// ============================================================================
+
+/**
+ * Parse page types from the SCHEMA.md ## Page Types section.
+ * Falls back to DEFAULT_PAGE_TYPES if section not found.
+ */
+export function loadPageTypes(schemaPath: string): PageTypeConfig[] {
+  console.assert(typeof schemaPath === "string", "schemaPath must be string");
+
+  try {
+    const content = fs.readFileSync(schemaPath, "utf-8");
+    const sectionMatch = content.match(/## Page Types Config\n+([\s\S]*?)(?=\n##|\n---|$)/);
+    if (!sectionMatch || !sectionMatch[1]) {
+      return DEFAULT_PAGE_TYPES;
+    }
+
+    const yaml = sectionMatch[1].trim();
+    // Parse YAML list of page type configs
+    const entries: PageTypeConfig[] = [];
+    const lines = yaml.split("\n");
+    let current: Partial<PageTypeConfig> | null = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("- id:")) {
+        if (current) entries.push(current as PageTypeConfig);
+        current = { id: trimmed.replace(/^-\s*id:\s*/, "").trim() };
+      } else if (current && trimmed.startsWith("name:")) {
+        current.name = trimmed.replace(/^name:\s*/, "").trim();
+      } else if (current && trimmed.startsWith("directory:")) {
+        current.directory = trimmed.replace(/^directory:\s*/, "").trim();
+      } else if (current && trimmed.startsWith("template:")) {
+        current.template = trimmed.replace(/^template:\s*/, "").trim();
+      } else if (current && trimmed.startsWith("sourceTypes:")) {
+        const val = trimmed.replace(/^sourceTypes:\s*/, "").trim();
+        current.sourceTypes = val.replace(/[\[\]"]/g, "").split(",").map(s => s.trim()).filter(Boolean) as SourceType[];
+      } else if (current && trimmed.startsWith("requiredSections:")) {
+        const val = trimmed.replace(/^requiredSections:\s*/, "").trim();
+        current.requiredSections = val.replace(/[\[\]"]/g, "").split(",").map(s => s.trim()).filter(Boolean);
+      } else if (current && trimmed.startsWith("icon:")) {
+        current.icon = trimmed.replace(/^icon:\s*/, "").trim();
+      }
+    }
+    if (current) entries.push(current as PageTypeConfig);
+
+    return entries.length > 0 ? entries : DEFAULT_PAGE_TYPES;
+  } catch {
+    return DEFAULT_PAGE_TYPES;
+  }
+}
+
+/**
+ * Parse domain from SCHEMA.md header.
+ * Falls back to "codebase" if not found.
+ */
+export function loadDomain(schemaPath: string): string {
+  console.assert(typeof schemaPath === "string", "schemaPath must be string");
+
+  try {
+    const content = fs.readFileSync(schemaPath, "utf-8");
+    const match = content.match(/\*\*Domain\*\*:\s*(\w+)/);
+    return match?.[1] ?? "codebase";
+  } catch {
+    return "codebase";
+  }
 }
 
 // ============================================================================
@@ -105,10 +174,26 @@ export function ensureWikiDirs(rootDir: string, wikiDir: string = DEFAULT_WIKI_D
 /**
  * Generate default SCHEMA.md content
  */
-export function generateSchemaMD(projectName: string): string {
-  return `# Codebase Wiki Schema
+/**
+ * Generate SCHEMA.md content with domain and page type configuration.
+ * The SCHEMA.md is the "constitution" for the wiki — the LLM reads it
+ * on every operation to understand constraints and page types.
+ */
+export function generateSchemaMD(projectName: string, domain: string = "codebase", pageTypes?: PageTypeConfig[]): string {
+  const types = pageTypes ?? DEFAULT_PAGE_TYPES;
+  const typesWithDirs = types.filter(pt => pt.directory);
 
-> This file defines how the LLM maintains the codebase wiki for **${projectName}**.
+  const pageTypeRows = typesWithDirs
+    .map(pt => `| ${pt.name} | \`${pt.directory}/\` | ${pt.id} pages`)
+    .join("\n");
+
+  const pageTypeConfigs = types
+    .map(pt => `- id: ${pt.id}\n  name: ${pt.name}\n  directory: ${pt.directory || "(none)"}\n  template: ${pt.template || "(none)"}\n  requiredSections: [${pt.requiredSections.join(", ")}]\n  sourceTypes: [${(pt.sourceTypes || []).join(", ")}]\n  icon: ${pt.icon || ""}`)
+    .join("\n");
+
+  return `# ${domain === "codebase" ? "Codebase" : domain.charAt(0).toUpperCase() + domain.slice(1)} Wiki Schema
+
+> This file defines how the LLM maintains the wiki for **${projectName}**.
 > It is the "constitution" — the LLM reads it on every operation to understand constraints.
 
 ## Page Naming
@@ -125,15 +210,17 @@ Every page **must** have:
 2. **Summary paragraph** — one paragraph describing what this is
 3. **See Also** section — cross-references to related pages
 
+**Domain**: ${domain}
+
 ## Page Types
 
 | Type | Directory | Purpose |
 |------|-----------|---------|
-| Entity | \`entities/\` | Code modules, services, components |
-| Concept | \`concepts/\` | Cross-cutting ideas, patterns, paradigms |
-| Decision | \`decisions/\` | Architecture Decision Records (ADRs) |
-| Evolution | \`evolution/\` | How something changed over time |
-| Comparison | \`comparisons/\` | Side-by-side analysis |
+${pageTypeRows}
+
+## Page Types Config
+
+${pageTypeConfigs}
 
 ## Operations
 
@@ -143,7 +230,7 @@ When ingesting a new commit or file change:
 
 1. Read the source (diff, file content)
 2. Identify affected entities
-3. Create or update entity pages in \`entities/\`
+3. Create or update entity pages in the appropriate directory
 4. Update \`INDEX.md\` with new/changed entries
 5. Update cross-references in related pages
 6. Append entry to \`meta/LOG.md\`
@@ -205,33 +292,44 @@ coverage
 }
 
 /**
- * Generate default INDEX.md content
+ * Simple English pluralization — handles common cases and domain-specific irregulars.
+ * entity → entities, query → queries, person → people, etc.
  */
-export function generateIndexMD(projectName: string): string {
-  return `# ${projectName} — Codebase Wiki Index
+const IRREGULAR_PLURALS: Record<string, string> = {
+  person: "people",
+  media: "media",
+};
 
-> Auto-maintained knowledge base for the **${projectName}** codebase.
+function pluralize(name: string): string {
+  const lower = name.toLowerCase();
+  if (IRREGULAR_PLURALS[lower]) {
+    const plural = IRREGULAR_PLURALS[lower]!;
+    // Preserve original casing: Person → People, person → people
+    return name[0] === name[0]!.toUpperCase() ? plural.charAt(0).toUpperCase() + plural.slice(1) : plural;
+  }
+  if (name.endsWith("y") && !name.endsWith("ay") && !name.endsWith("ey") && !name.endsWith("oy") && !name.endsWith("uy")) {
+    return name.slice(0, -1) + "ies";
+  }
+  if (name.endsWith("s") || name.endsWith("x") || name.endsWith("z") || name.endsWith("ch") || name.endsWith("sh")) {
+    return name + "es";
+  }
+  return name + "s";
+}
+
+export function generateIndexMD(projectName: string, domain: string = "codebase", pageTypes?: PageTypeConfig[]): string {
+  const types = pageTypes ?? DEFAULT_PAGE_TYPES;
+  const domainLabel = domain === "codebase" ? "Codebase" : domain.charAt(0).toUpperCase() + domain.slice(1);
+  const sections = types
+    .filter(pt => pt.directory)
+    .map(pt => `## ${pluralize(pt.name)}\n\n\u003c!-- ${pt.name} pages will be listed here automatically --\u003e`)
+    .join("\n\n");
+
+  return `# ${projectName} — ${domainLabel} Wiki Index
+
+> Auto-maintained knowledge base for the **${projectName}** ${domain}.
 > Use \`/wiki-query <question>\` to search, or browse pages below.
 
-## Entities
-
-<!-- Entity pages will be listed here automatically -->
-
-## Concepts
-
-<!-- Concept pages will be listed here automatically -->
-
-## Decisions (ADRs)
-
-<!-- ADR pages will be listed here automatically -->
-
-## Evolution
-
-<!-- Evolution pages will be listed here automatically -->
-
-## Comparisons
-
-<!-- Comparison pages will be listed here automatically -->
+${sections}
 
 ---
 

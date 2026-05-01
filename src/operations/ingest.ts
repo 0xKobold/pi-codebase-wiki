@@ -35,12 +35,8 @@ import {
   generateSchemaMD,
   generateIndexMD,
   generateLogMD,
-  generateEntityTemplate,
-  generateDecisionTemplate,
-  generateEvolutionTemplate,
-  generateConceptTemplate,
-  generateComparisonTemplate,
 } from "../core/config.js";
+import { getTemplatesForPageTypes } from "../core/templates.js";
 
 // ============================================================================
 // INGEST OPERATIONS
@@ -64,7 +60,11 @@ export function initWiki(
 ): string {
   console.assert(typeof rootDir === "string", "rootDir must be string");
 
-  const wikiPath = ensureWikiDirs(rootDir, config.wikiDir);
+  // Resolve domain preset (codebase, personal, research, book)
+  const domain = config.domain ?? "codebase";
+  const pageTypes = config.pageTypes ?? DEFAULT_PAGE_TYPES;
+
+  const wikiPath = ensureWikiDirs(rootDir, config.wikiDir, pageTypes);
   const schemaPath = path.join(wikiPath, "SCHEMA.md");
   const indexPath = path.join(wikiPath, "INDEX.md");
   const logPath = path.join(wikiPath, "meta", "LOG.md");
@@ -73,14 +73,14 @@ export function initWiki(
   const pkg = readPackageJson(rootDir);
   const projectName = (pkg?.name as string) || path.basename(rootDir);
 
-  // Create SCHEMA.md
+  // Create SCHEMA.md — includes domain and page type config
   if (!fs.existsSync(schemaPath)) {
-    fs.writeFileSync(schemaPath, generateSchemaMD(projectName), "utf-8");
+    fs.writeFileSync(schemaPath, generateSchemaMD(projectName, domain, pageTypes), "utf-8");
   }
 
   // Create INDEX.md
   if (!fs.existsSync(indexPath)) {
-    fs.writeFileSync(indexPath, generateIndexMD(projectName), "utf-8");
+    fs.writeFileSync(indexPath, generateIndexMD(projectName, domain, pageTypes), "utf-8");
   }
 
   // Create LOG.md
@@ -88,15 +88,9 @@ export function initWiki(
     fs.writeFileSync(logPath, generateLogMD(), "utf-8");
   }
 
-  // Create templates
+  // Create templates for all configured page types
   const templatesDir = path.join(wikiPath, "templates");
-  const templates: Record<string, string> = {
-    "entity.md": generateEntityTemplate(),
-    "concept.md": generateConceptTemplate(),
-    "decision.md": generateDecisionTemplate(),
-    "evolution.md": generateEvolutionTemplate(),
-    "comparison.md": generateComparisonTemplate(),
-  };
+  const templates = getTemplatesForPageTypes(pageTypes);
 
   for (const [filename, content] of Object.entries(templates)) {
     const templatePath = path.join(templatesDir, filename);
@@ -110,7 +104,7 @@ export function initWiki(
     id: "index",
     path: "INDEX.md",
     type: "index",
-    title: `${projectName} — Codebase Wiki Index`,
+    title: `${projectName} — ${domain === "codebase" ? "Codebase" : domain.charAt(0).toUpperCase() + domain.slice(1)} Wiki Index`,
     summary: `Auto-maintained knowledge base for ${projectName}`,
     sourceFiles: [],
     sourceCommits: [],
