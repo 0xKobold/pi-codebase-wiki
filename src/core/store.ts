@@ -22,10 +22,10 @@ import { generateId } from "../shared.js";
 // ============================================================================
 // TYPES
 // ============================================================================
+// IngestSourceType — used by the ingest_log table
+// ============================================================================
 
 type IngestSourceType = "commit" | "file" | "docs" | "manual" | "full-tree";
-
-// ============================================================================
 // STORE CLASS
 // ============================================================================
 
@@ -33,6 +33,7 @@ export class WikiStore {
   private db: SqlJsDatabase | null = null;
   private dbPath: string;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private exitHandler: (() => void) | null = null;
   private static readonly SAVE_DELAY_MS = 500;
 
   constructor(dbPath: string) {
@@ -66,15 +67,14 @@ export class WikiStore {
     this.runMigrations();
 
     // Ensure data is saved on process exit to prevent data loss
-    const self = this;
-    const exitHandler = () => {
-      if (self.db) {
-        self.save();
+    this.exitHandler = () => {
+      if (this.db) {
+        this.save();
       }
     };
-    process.on("exit", exitHandler);
-    process.on("SIGINT", exitHandler);
-    process.on("SIGTERM", exitHandler);
+    process.on("exit", this.exitHandler);
+    process.on("SIGINT", this.exitHandler);
+    process.on("SIGTERM", this.exitHandler);
   }
 
   private createTables(): void {
@@ -197,9 +197,12 @@ export class WikiStore {
       this.db = null;
     }
     // Remove exit handlers to prevent double-save
-    process.removeAllListeners("exit");
-    process.removeAllListeners("SIGINT");
-    process.removeAllListeners("SIGTERM");
+    if (this.exitHandler) {
+      process.removeListener("exit", this.exitHandler);
+      process.removeListener("SIGINT", this.exitHandler);
+      process.removeListener("SIGTERM", this.exitHandler);
+      this.exitHandler = null;
+    }
   }
 
   // ============================================================================
@@ -446,7 +449,7 @@ export class WikiStore {
     return {
       pageId: row[0] as string,
       checkTime: row[1] as string,
-      staleFiles: JSON.parse(row[2] as string || "[]"),
+      staleFiles: safeJsonParse(row[2] as string, []),
       stalenessScore: row[3] as number,
     };
   }
@@ -555,6 +558,11 @@ function validateSlug(slug: string): boolean {
   return /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(slug);
 }
 
+function safeJsonParse(text: string | number | null, fallback: any): any {
+  if (typeof text !== "string" || text === "") return fallback;
+  try { return JSON.parse(text); } catch { return fallback; }
+}
+
 function rowToPage(row: (string | number | null | Uint8Array)[]): WikiPage {
   return {
     id: row[0] as string,
@@ -562,10 +570,10 @@ function rowToPage(row: (string | number | null | Uint8Array)[]): WikiPage {
     type: row[2] as string,
     title: row[3] as string,
     summary: (row[4] as string) ?? "",
-    sourceFiles: JSON.parse((row[5] as string) || "[]"),
-    sourceCommits: JSON.parse((row[6] as string) || "[]"),
-    sourceIds: JSON.parse((row[7] as string) || "[]"),
-    metadata: JSON.parse((row[8] as string) || "{}"),
+    sourceFiles: safeJsonParse(row[5] as string, []),
+    sourceCommits: safeJsonParse(row[6] as string, []),
+    sourceIds: safeJsonParse(row[7] as string, []),
+    metadata: safeJsonParse(row[8] as string, {}),
     lastIngested: row[9] as string,
     lastChecked: row[10] as string,
     inboundLinks: (row[11] as number) ?? 0,
@@ -593,7 +601,7 @@ function rowToSourceManifest(row: (string | number | null | Uint8Array)[]): Sour
     path: row[3] as string,
     hash: row[4] as string,
     ingestedAt: row[5] as string,
-    pagesCreated: JSON.parse((row[6] as string) || "[]"),
-    metadata: JSON.parse((row[7] as string) || "{}"),
+    pagesCreated: safeJsonParse(row[6] as string, []),
+    metadata: safeJsonParse(row[7] as string, {}),
   };
 }

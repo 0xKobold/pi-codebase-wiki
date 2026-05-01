@@ -453,21 +453,10 @@ function inferPageTypeFromSource(sourceType: SourceType): string {
 // ============================================================================
 // STRUCTURED LOG
 // ============================================================================
+// STRUCTURED LOG — Re-exports from central log module
+// ============================================================================
 
-/**
- * Log entry format for the structured LOG.md
- */
-export interface LogEntry {
-  timestamp: string;
-  type: "ingest" | "query" | "lint" | "resolve" | "manual";
-  source: string;
-  title: string;
-  sourceManifestId?: string;
-  pagesCreated: string[];
-  pagesUpdated: string[];
-  contradictions?: string[];
-  details?: string;
-}
+export type { LogEntry } from "./log.js";
 
 /**
  * Append a source ingestion entry to the structured LOG.md
@@ -477,7 +466,9 @@ function appendSourceToLog(
   manifest: SourceManifest,
   result: IngestSourceResult
 ): void {
-  const entry: LogEntry = {
+  // Import dynamically to avoid circular dependency at module level
+  const { appendToLog } = require("./log.js") as typeof import("./log.js");
+  const entry: import("./log.js").LogEntry = {
     timestamp: manifest.ingestedAt,
     type: "ingest",
     source: manifest.type,
@@ -487,155 +478,17 @@ function appendSourceToLog(
     pagesUpdated: result.pagesUpdated,
   };
 
-  appendLogEntry(wikiPath, entry);
+  appendToLog(wikiPath, entry);
 }
+
+// ============================================================================
 
 /**
  * Append a structured log entry to LOG.md
  */
-export function appendLogEntry(wikiPath: string, entry: LogEntry): void {
-  const logPath = path.join(wikiPath, "meta", "LOG.md");
-  const today = entry.timestamp.split("T")[0] ?? entry.timestamp;
 
-  const prefix = `## [${entry.timestamp}] ${entry.type} | ${entry.source} | ${entry.title}`;
+// (Log functions centralized in ./log.ts — import from there)
 
-  const lines: string[] = [
-    prefix,
-    "",
-    `- **Source**: ${entry.source}${entry.sourceManifestId ? ` (\`${entry.sourceManifestId}\`)` : ""}`,
-    `- **Pages created**: ${entry.pagesCreated.length > 0 ? entry.pagesCreated.map(p => `[[${p}]]`).join(", ") : "none"}`,
-    `- **Pages updated**: ${entry.pagesUpdated.length > 0 ? entry.pagesUpdated.map(p => `[[${p}]]`).join(", ") : "none"}`,
-  ];
-
-  if (entry.contradictions && entry.contradictions.length > 0) {
-    lines.push(`- **Contradictions**: ${entry.contradictions.join(", ")}`);
-  }
-
-  if (entry.details) {
-    lines.push(`- **Details**: ${entry.details}`);
-  }
-
-  lines.push("");
-
-  // Ensure meta directory exists
-  fs.mkdirSync(path.join(wikiPath, "meta"), { recursive: true });
-
-  let content: string;
-  if (fs.existsSync(logPath)) {
-    content = fs.readFileSync(logPath, "utf-8");
-    // Append at end of file
-    content = content.trimEnd() + "\n\n" + lines.join("\n") + "\n";
-  } else {
-    // Create new LOG.md
-    content = generateInitialLog() + "\n" + lines.join("\n") + "\n";
-  }
-
-  fs.writeFileSync(logPath, content, "utf-8");
-}
-
-/**
- * Generate initial LOG.md content (backward compatible with old format,
- * plus new structured entries)
- */
-function generateInitialLog(): string {
-  const today = formatWikiDate(new Date());
-  return `# Ingest Log
-
-> Auto-maintained by pi-codebase-wiki. Parse recent entries with:
-> \`grep "^## \[" .codebase-wiki/meta/LOG.md | tail -5\`
-
-| Timestamp | Source | Ref | Pages Created | Pages Updated |
-|-----------|--------|-----|---------------|----------------|
-| - | - | - | - | - |
-
----
-*Wiki initialized: ${today}*
-`;
-}
-
-/**
- * Parse structured log entries from LOG.md
- */
-export function parseLog(wikiPath: string): LogEntry[] {
-  const logPath = path.join(wikiPath, "meta", "LOG.md");
-  const entries: LogEntry[] = [];
-
-  let content: string;
-  try {
-    content = fs.readFileSync(logPath, "utf-8");
-  } catch {
-    return entries;
-  }
-
-  const lines = content.split("\n");
-  let currentEntry: Partial<LogEntry> | null = null;
-
-  for (const line of lines) {
-    // Match structured entry: ## [ISO-timestamp] type | source | title
-    const match = line.match(/^## \[([^\]]+)\]\s+(\w+)\s*\|\s*(\w[\w-]*)\s*\|\s*(.+)$/);
-    if (match) {
-      if (currentEntry) {
-        entries.push(currentEntry as LogEntry);
-      }
-      currentEntry = {
-        timestamp: match[1]!,
-        type: match[2]!.toLowerCase() as LogEntry["type"],
-        source: match[3]!,
-        title: match[4]!.trim(),
-        pagesCreated: [],
-        pagesUpdated: [],
-      };
-      continue;
-    }
-
-    // Parse list items within an entry
-    if (currentEntry) {
-      const createdMatch = line.match(/- \*\*Pages created\*\*: (.+)/);
-      if (createdMatch) {
-        currentEntry.pagesCreated = createdMatch[1]!
-          .replace(/none/g, "")
-          .split(/\[\[([^\]]+)\]\]/g)
-          .filter((s, i) => i % 2 === 1); // extract slug from [[slug]]
-      }
-
-      const updatedMatch = line.match(/- \*\*Pages updated\*\*: (.+)/);
-      if (updatedMatch) {
-        currentEntry.pagesUpdated = updatedMatch[1]!
-          .replace(/none/g, "")
-          .split(/\[\[([^\]]+)\]\]/g)
-          .filter((s, i) => i % 2 === 1);
-      }
-
-      const sourceMatch = line.match(/- \*\*Source\*\*: (\w[\w-]*)(?: \(`([^`]+)`\))?/);
-      if (sourceMatch && sourceMatch[2]) {
-        currentEntry.sourceManifestId = sourceMatch[2];
-      }
-
-      const detailMatch = line.match(/- \*\*Details\*\*: (.+)/);
-      if (detailMatch) {
-        currentEntry.details = detailMatch[1]!;
-      }
-    }
-  }
-
-  // Push last entry
-  if (currentEntry) {
-    entries.push(currentEntry as LogEntry);
-  }
-
-  return entries;
-}
-
-/**
- * Get recent log entries
- */
-export function getRecentLog(wikiPath: string, count: number = 5): LogEntry[] {
-  const entries = parseLog(wikiPath);
-  return entries.slice(-count);
-}
-
-// ============================================================================
-// GIT SOURCE MANIFEST INTEGRATION
 // ============================================================================
 
 /**

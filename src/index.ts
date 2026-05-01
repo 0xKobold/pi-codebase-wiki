@@ -600,7 +600,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       store.upsertPage({
         id: fileName,
-        path: `entities/${fileName}.md`,
+        path: `${entityDirName}/${fileName}.md`,
         type: "entity",
         title: name,
         summary,

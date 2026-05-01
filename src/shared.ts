@@ -34,7 +34,7 @@ export interface PageTypeConfig {
   icon?: string;                 // Emoji for UI display
 }
 
-/** Source type — what kind of raw content was ingested */
+/** Source type — Phase 3: used by /wiki-ingest --source article/note/conversation */
 export type SourceType =
   | "git-commits"         // Batch of git commits (existing)
   | "article"             // Web article, PDF, blog post
@@ -145,10 +145,10 @@ export interface IngestConfig {
   excludePatterns: string[];      // default: ["node_modules", "dist", ".git"]
 }
 
-/** Ingestion workflow mode */
+/** Ingestion workflow mode — Phase 5: confirmation/guided mode */
 export type IngestionMode = "auto" | "confirm" | "guided";
 
-/** Ingestion confirmation thresholds */
+/** Ingestion confirmation thresholds — Phase 5: confirmation/guided mode */
 export interface IngestionThresholds {
   newPageCreation: boolean;           // Ask before creating new pages (default: false)
   pageDeletion: boolean;              // Ask before deleting/merging pages (default: true)
@@ -204,14 +204,14 @@ export const DEFAULT_PAGE_TYPES: PageTypeConfig[] = [
   { id: "concept",   name: "Concept",   directory: "concepts",   template: "concept.md",   requiredSections: ["Summary", "See Also"], sourceTypes: ["article", "note", "conversation"], icon: "💡" },
   { id: "decision",  name: "Decision",  directory: "decisions",  template: "decision.md",  requiredSections: ["Context", "Decision", "Consequences"], sourceTypes: ["git-commits", "conversation", "manual"], icon: "⚖️" },
   { id: "evolution", name: "Evolution", directory: "evolution",   template: "evolution.md", requiredSections: ["Timeline", "Current State"], sourceTypes: ["git-commits"], icon: "📈" },
-  { id: "comparison",name: "Comparison",directory: "comparisons", template: "comparison.md",requiredSections: ["Comparison", "Recommendation"], sourceTypes: ["article", "note"], icon: "⚖️" },
+  { id: "comparison",name: "Comparison",directory: "comparisons", template: "comparison.md",requiredSections: ["Comparison", "Recommendation"], sourceTypes: ["article", "note"], icon: "📊" },
   { id: "query",    name: "Query",     directory: "queries",    template: "query.md",     requiredSections: ["Matched Pages"], sourceTypes: ["manual"], icon: "🔍" },
   { id: "changelog", name: "Changelog", directory: "",           template: "",            requiredSections: [], icon: "📋" },
   { id: "index",    name: "Index",     directory: "",           template: "",            requiredSections: [], icon: "📖" },
   { id: "schema",   name: "Schema",    directory: "",           template: "",            requiredSections: [], icon: "📜" },
 ];
 
-/** Domain preset page type configurations */
+/** Domain preset page type configurations — Phase 3: used by /wiki-init --preset */
 export const DOMAIN_PRESETS: Record<string, { name: string; description: string; pageTypes: PageTypeConfig[]; sourceTypes: SourceType[] }> = {
   codebase: {
     name: "Codebase",
@@ -239,7 +239,7 @@ export const DOMAIN_PRESETS: Record<string, { name: string; description: string;
       { id: "concept",   name: "Concept",   directory: "concepts",   template: "concept.md",   requiredSections: ["Summary", "See Also"], sourceTypes: ["article", "note"], icon: "💡" },
       { id: "finding",  name: "Finding",  directory: "findings",   template: "finding.md",   requiredSections: ["Summary", "Evidence"], sourceTypes: ["article", "note"], icon: "🔬" },
       { id: "method",    name: "Method",    directory: "methods",    template: "method.md",    requiredSections: ["Summary", "Steps"], sourceTypes: ["document", "note"], icon: "🧪" },
-      { id: "comparison",name: "Comparison",directory: "comparisons", template: "comparison.md",requiredSections: ["Comparison", "Recommendation"], sourceTypes: ["article", "note"], icon: "⚖️" },
+      { id: "comparison",name: "Comparison",directory: "comparisons", template: "comparison.md",requiredSections: ["Comparison", "Recommendation"], sourceTypes: ["article", "note"], icon: "📊" },
     ],
     sourceTypes: ["article", "document", "url", "note"],
   },

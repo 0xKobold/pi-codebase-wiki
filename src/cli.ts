@@ -44,6 +44,7 @@ import {
   getLatestHash,
 } from "./core/index.js";
 import { toSlug, validateSlug, formatWikiDate, getDirectoryForPageType } from "./shared.js";
+import type { PageType } from "./shared.js";
 import type { WikiConfig, GitCommit } from "./shared.js";
 
 // ============================================================================
@@ -308,6 +309,11 @@ kapy()
       }
       console.log(`  Stale pages:  ${stats.stalePages}`);
       console.log(`  Sources:       ${sourceCount.total}`);
+      if (Object.keys(sourceCount.byType).length > 0) {
+        for (const [type, count] of Object.entries(sourceCount.byType)) {
+          console.log(`    ${type}: ${count}`);
+        }
+      }
       console.log(`  Last ingest:  ${stats.lastIngest ?? "never"}`);
       console.log(`  Git branch:   ${branch}`);
       console.log(`  Latest hash:  ${lastHash?.slice(0, 7) ?? "unknown"}`);
@@ -375,8 +381,8 @@ kapy()
 
       store.upsertPage({
         id: fileName,
-        path: `entities/${fileName}.md`,
-        type: type as any,
+        path: `${entityDirName}/${fileName}.md`,
+        type: type as PageType,
         title: name,
         summary,
         sourceFiles: files,
@@ -1022,6 +1028,82 @@ kapy()
     }
 
     closeStore(store);
+  })
+
+  // ─── log ───────────────────────────────────────────────────────────────────
+  .command("log", {
+    description: "Show structured wiki log entries",
+    args: [],
+    flags: {
+      last: {
+        type: "number",
+        alias: "n",
+        description: "Number of recent entries to show (default 10)",
+        default: 10,
+      },
+      type: {
+        type: "string",
+        alias: "t",
+        description: "Filter by type (ingest, query, lint, resolve, manual)",
+      },
+      since: {
+        type: "string",
+        alias: "s",
+        description: "Show entries since this date (e.g. '2026-04-01')",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const lastN = (ctx.args.last as number) || 10;
+    const typeFilter = ctx.args.type as string | undefined;
+    const since = ctx.args.since as string | undefined;
+
+    if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      console.error("\u274c Wiki not initialized. Run `wiki init` first.");
+      process.exit(1);
+    }
+
+    const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+    const { parseLog, getRecentLog, getLogByType, getLogSince } = await import("./operations/log.js");
+
+    let entries;
+    if (typeFilter) {
+      entries = getLogByType(wikiPath, typeFilter);
+    } else if (since) {
+      entries = getLogSince(wikiPath, since);
+    } else {
+      entries = getRecentLog(wikiPath, lastN);
+    }
+
+    if (entries.length === 0) {
+      ctx.warn("No log entries found.");
+      return;
+    }
+
+    console.log(`\n📖 Wiki Log (showing ${entries.length} entries)\n`);
+
+    for (const entry of entries) {
+      const date = entry.timestamp.split("T")[0] ?? entry.timestamp;
+      const time = entry.timestamp.split("T")[1]?.slice(0, 5) ?? "";
+      console.log(`  ## [${date} ${time}] ${entry.type} | ${entry.source} | ${entry.title}`);
+      if (entry.pagesCreated.length > 0) {
+        console.log(`     Created: ${entry.pagesCreated.join(", ")}`);
+      }
+      if (entry.pagesUpdated.length > 0) {
+        console.log(`     Updated: ${entry.pagesUpdated.join(", ")}`);
+      }
+      if (entry.sourceManifestId) {
+        console.log(`     Source: ${entry.sourceManifestId}`);
+      }
+      if (entry.details) {
+        console.log(`     ${entry.details}`);
+      }
+      console.log();
+    }
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify(entries));
+    }
   })
 
   .run();

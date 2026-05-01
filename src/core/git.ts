@@ -404,7 +404,7 @@ export function inferEntityFromPath(filePath: string): string {
     return `${parts[1]}-${parts[2]!.replace(/\.[^.]+$/, "")}`;
   }
 
-  // Fallback: use filename without extension
+  // Fallback: use filename without extension, normalized to validateSlug-compatible kebab-case
   const filename = parts[parts.length - 1]!;
-  return filename.replace(/\.[^.]+$/, "");
+  return filename.replace(/\.[^.]+$/, "").toLowerCase();
 }

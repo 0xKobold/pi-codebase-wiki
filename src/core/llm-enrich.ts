@@ -11,8 +11,8 @@
  *
  * NASA-10: small functions, validation, no globals.
  */
-
 import * as fs from "fs";
+import * as path from "path";
 import type { WikiPage } from "../shared.js";
 import type { WikiStore } from "./store.js";
 
@@ -255,5 +255,3 @@ export function formatEnrichmentMessage(prompts: EnrichmentPrompt[]): string {
   return lines.join("\n");
 }
 
-// Need path for join
-import * as path from "path";

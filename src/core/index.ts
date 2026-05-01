@@ -46,12 +46,19 @@ export {
   storeSource,
   generateSourceId,
   computeHash,
-  appendLogEntry,
-  parseLog,
-  getRecentLog,
   createGitSourceManifest,
 } from "../operations/source.js";
-export type { IngestSourceResult, IngestUrlResult, LogEntry } from "../operations/source.js";
+export type { IngestSourceResult, IngestUrlResult } from "../operations/source.js";
+
+export {
+  appendToLog,
+  appendLegacyLog,
+  parseLog,
+  getRecentLog,
+  getLogByType,
+  getLogSince,
+} from "../operations/log.js";
+export type { LogEntry } from "../operations/log.js";
 
 export { enrichAllEntities } from "./smart-ingest.js";
 export { generateEnrichmentBatch, formatEnrichmentMessage } from "./llm-enrich.js";

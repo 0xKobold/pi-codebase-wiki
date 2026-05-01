@@ -268,8 +268,8 @@ describe("inferEntityFromPath", () => {
     expect(inferEntityFromPath("src/extensions/core/git-commit.ts")).toBe("extensions-core");
   });
 
-  test("falls back to filename", () => {
-    expect(inferEntityFromPath("README.md")).toBe("README");
+  test("falls back to filename (lowercase)", () => {
+    expect(inferEntityFromPath("README.md")).toBe("readme");
   });
 });
 
