@@ -422,7 +422,7 @@ import {
   enrichAllEntities,
 } from "../../src/core/smart-ingest.js";
 
-describe("Phase 2: Dependency Extraction", () => {
+describe("Dependency Extraction", () => {
   test("extractImports from TS file", () => {
     const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-test-"));
     const tsFile = path.join(tmpdir, "test.ts");
@@ -477,7 +477,7 @@ export { Foo, Bar } from './other.js';
   });
 });
 
-describe("Phase 2: Smart Ingest", () => {
+describe("Smart Ingest", () => {
   test("enrichAllEntities returns result with no pages", () => {
     const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-test-"));
     const wikiDir = path.join(tmpdir, ".codebase-wiki");
@@ -493,7 +493,7 @@ describe("Phase 2: Smart Ingest", () => {
   });
 });
 
-describe("Phase 2: Git Log Parsing (null-delimited)", () => {
+describe("Git Log Parsing (null-delimited)", () => {
   test("parseCommitMessage handles empty body", () => {
     const result = parseCommitMessage("fix: correct typo");
     expect(result.type).toBe("fix");
@@ -512,7 +512,7 @@ describe("Phase 2: Git Log Parsing (null-delimited)", () => {
   });
 });
 
-describe("Phase 2: toSlug edge cases", () => {
+describe("toSlug edge cases", () => {
   test("handles dot-prefixed paths", () => {
     // .gitignore -> gitignore (not -gitignore)
     const slug = toSlug(".gitignore");
@@ -534,7 +534,7 @@ describe("Phase 2: toSlug edge cases", () => {
   });
 });
 
-describe("Phase 2: Update-on-reingest preserves content", () => {
+describe("Update-on-reingest preserves content", () => {
   test("isEnriched check correctly identifies stubs", () => {
     const stubContent = "# Title\n> Summary\n\n## Dependencies\n- (to be discovered)\n";
     const enrichedContent = "# Title\n> Summary\n\n## Dependencies\n- [[auth-module]]\n- [[event-bus]]\n";

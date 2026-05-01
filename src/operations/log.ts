@@ -187,6 +187,11 @@ export function parseLog(wikiPath: string): LogEntry[] {
         currentEntry.sourceManifestId = sourceMatch[2];
       }
 
+      const contradictionMatch = line.match(/- \*\*Contradictions\*\*: (.+)/);
+      if (contradictionMatch) {
+        currentEntry.contradictions = contradictionMatch[1]!.split(", ").filter(Boolean);
+      }
+
       const detailMatch = line.match(/- \*\*Details\*\*: (.+)/);
       if (detailMatch) {
         currentEntry.details = detailMatch[1]!;
