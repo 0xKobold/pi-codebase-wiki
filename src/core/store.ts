@@ -133,21 +133,7 @@ export class WikiStore {
     this.db!.run("CREATE INDEX IF NOT EXISTS idx_pages_stale ON wiki_pages(stale)");
     this.db!.run("CREATE INDEX IF NOT EXISTS idx_ingest_timestamp ON ingest_log(timestamp)");
     this.db!.run("CREATE INDEX IF NOT EXISTS idx_crossref_from ON cross_references(from_page)");
-    this.db!.run(`
-      CREATE TABLE IF NOT EXISTS source_manifests (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        title TEXT NOT NULL,
-        path TEXT NOT NULL,
-        hash TEXT NOT NULL,
-        ingested_at TEXT NOT NULL,
-        pages_created TEXT DEFAULT '[]',
-        metadata TEXT DEFAULT '{}'
-      );
-    `);
-
-    this.db!.run("CREATE INDEX IF NOT EXISTS idx_sources_type ON source_manifests(type)");
-    this.db!.run("CREATE INDEX IF NOT EXISTS idx_sources_ingested ON source_manifests(ingested_at)");
+    // source_manifests table + indexes created in runMigrations() for backward compat
   }
 
   private runMigrations(): void {
@@ -255,10 +241,21 @@ export class WikiStore {
     this.scheduleSave();
   }
 
+  // Explicit column list for wiki_pages — avoids column-ordering bugs with migrations.
+  // ALTER TABLE ADD COLUMN appends columns at the end, so SELECT * would return
+  // different column order on fresh vs migrated databases. Always use explicit columns.
+  private static readonly PAGE_COLUMNS = [
+    "id", "path", "type", "title", "summary", "source_files", "source_commits",
+    "source_ids", "metadata", "last_ingested", "last_checked",
+    "inbound_links", "outbound_links", "stale"
+  ].join(", ");
+
   getPage(id: string): WikiPage | null {
     console.assert(typeof id === "string", "id must be string");
 
-    const result = this.db!.exec("SELECT * FROM wiki_pages WHERE id = ?", [id]);
+    const result = this.db!.exec(
+      `SELECT ${WikiStore.PAGE_COLUMNS} FROM wiki_pages WHERE id = ?`, [id]
+    );
     if (result.length === 0 || result[0]!.values.length === 0) return null;
 
     return rowToPage(result[0]!.values[0]!);
@@ -267,21 +264,25 @@ export class WikiStore {
   getPageByPath(path: string): WikiPage | null {
     console.assert(typeof path === "string", "path must be string");
 
-    const result = this.db!.exec("SELECT * FROM wiki_pages WHERE path = ?", [path]);
+    const result = this.db!.exec(
+      `SELECT ${WikiStore.PAGE_COLUMNS} FROM wiki_pages WHERE path = ?`, [path]
+    );
     if (result.length === 0 || result[0]!.values.length === 0) return null;
 
     return rowToPage(result[0]!.values[0]!);
   }
 
   getAllPages(): WikiPage[] {
-    const result = this.db!.exec("SELECT * FROM wiki_pages ORDER BY title");
+    const result = this.db!.exec(
+      `SELECT ${WikiStore.PAGE_COLUMNS} FROM wiki_pages ORDER BY title`
+    );
     if (result.length === 0) return [];
     return result[0]!.values.map(row => rowToPage(row));
   }
 
   getPagesByType(type: PageType): WikiPage[] {
     const result = this.db!.exec(
-      "SELECT * FROM wiki_pages WHERE type = ? ORDER BY title",
+      `SELECT ${WikiStore.PAGE_COLUMNS} FROM wiki_pages WHERE type = ? ORDER BY title`,
       [type]
     );
     if (result.length === 0) return [];
@@ -290,7 +291,7 @@ export class WikiStore {
 
   getStalePages(): WikiPage[] {
     const result = this.db!.exec(
-      "SELECT * FROM wiki_pages WHERE stale = 1 ORDER BY last_ingested ASC"
+      `SELECT ${WikiStore.PAGE_COLUMNS} FROM wiki_pages WHERE stale = 1 ORDER BY last_ingested ASC`
     );
     if (result.length === 0) return [];
     return result[0]!.values.map(row => rowToPage(row));
@@ -298,7 +299,7 @@ export class WikiStore {
 
   getOrphanPages(): WikiPage[] {
     const result = this.db!.exec(
-      `SELECT * FROM wiki_pages
+      `SELECT ${WikiStore.PAGE_COLUMNS} FROM wiki_pages
        WHERE inbound_links = 0
        AND type NOT IN ('index', 'schema', 'changelog')`
     );

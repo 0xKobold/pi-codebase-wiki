@@ -43,7 +43,7 @@ import {
   getCurrentBranch,
   getLatestHash,
 } from "./core/index.js";
-import { toSlug, validateSlug, formatWikiDate } from "./shared.js";
+import { toSlug, validateSlug, formatWikiDate, getDirectoryForPageType } from "./shared.js";
 import type { WikiConfig, GitCommit } from "./shared.js";
 
 // ============================================================================
@@ -299,6 +299,7 @@ kapy()
       const stats = store.getStats();
       const branch = getCurrentBranch(rootDir);
       const lastHash = getLatestHash(rootDir);
+      const sourceCount = store.getSourceCount();
 
       console.log(`📖 Codebase Wiki Status\n`);
       console.log(`  Total pages:  ${stats.totalPages}`);
@@ -306,6 +307,7 @@ kapy()
         console.log(`  ${type}:         ${count}`);
       }
       console.log(`  Stale pages:  ${stats.stalePages}`);
+      console.log(`  Sources:       ${sourceCount.total}`);
       console.log(`  Last ingest:  ${stats.lastIngest ?? "never"}`);
       console.log(`  Git branch:   ${branch}`);
       console.log(`  Latest hash:  ${lastHash?.slice(0, 7) ?? "unknown"}`);
@@ -359,7 +361,8 @@ kapy()
 
     try {
       const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
-      const entityDir = path.join(wikiPath, "entities");
+      const entityDirName = getDirectoryForPageType("entity", DEFAULT_CONFIG.pageTypes);
+      const entityDir = path.join(wikiPath, entityDirName);
       const fileName = name.toLowerCase().replace(/[^a-z0-9]/g, "-");
       const filePath = path.join(entityDir, `${fileName}.md`);
       const today = new Date().toISOString().split("T")[0];
@@ -442,12 +445,13 @@ kapy()
       const adrNumber = String(decisions.length + 1).padStart(3, "0");
       const slug = `adr-${adrNumber}-${title.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
       const fileName = slug.slice(0, 80);
-      const filePath = path.join(wikiPath, "decisions", `${fileName}.md`);
+      const decisionDirName = getDirectoryForPageType("decision", DEFAULT_CONFIG.pageTypes);
+      const filePath = path.join(wikiPath, decisionDirName, `${fileName}.md`);
       const today = new Date().toISOString().split("T")[0];
 
       const content = `# ADR-${adrNumber}: ${title}\n\n> **Status**: ${status}\n\n## Context\n${context}\n\n## Decision\n${decision}\n\n## Consequences\n- (to be determined)\n\n## Alternatives Considered\n${alternatives || "- None documented yet"}\n\n## References\n- Created: ${today}\n\n## See Also\n- [[index]]\n`;
 
-      fs.mkdirSync(path.join(wikiPath, "decisions"), { recursive: true });
+      fs.mkdirSync(path.join(wikiPath, decisionDirName), { recursive: true });
       fs.writeFileSync(filePath, content, "utf-8");
 
       store.upsertPage({
@@ -513,7 +517,8 @@ kapy()
     try {
       const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
       const slug = toSlug(name);
-      const conceptDir = path.join(wikiPath, "concepts");
+      const conceptDirName = getDirectoryForPageType("concept", DEFAULT_CONFIG.pageTypes);
+      const conceptDir = path.join(wikiPath, conceptDirName);
       const filePath = path.join(conceptDir, `${slug}.md`);
       const today = formatWikiDate(new Date());
 
@@ -710,8 +715,9 @@ kapy()
     // Persist to wiki if initialized (merge with existing evolution page)
     if (wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
       const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
-      const evolvePath = path.join(wikiPath, "evolution", `${slug}.md`);
-      fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
+      const evolutionDirName = getDirectoryForPageType("evolution", DEFAULT_CONFIG.pageTypes);
+      const evolvePath = path.join(wikiPath, evolutionDirName, `${slug}.md`);
+      fs.mkdirSync(path.join(wikiPath, evolutionDirName), { recursive: true });
 
       // Merge new timeline entries with existing evolution page
       let existingContent: string | null = null;
@@ -815,6 +821,207 @@ kapy()
     const port = (ctx.args.port as number) || 3000;
     const shouldOpen = ctx.args.open as boolean;
     await serveWiki(process.cwd(), DEFAULT_CONFIG, { port, open: shouldOpen });
+  })
+
+  // ─── ingest-source ──────────────────────────────────────────────────────
+  .command("ingest-source", {
+    description: "Ingest an arbitrary source (article, note, conversation, etc.) into the wiki",
+    args: [
+      { name: "type", description: "Source type: article, note, conversation, document, url, media, manual", required: true },
+      { name: "title", description: "Title for the source", required: true },
+    ],
+    flags: {
+      content: {
+        type: "string",
+        alias: "c",
+        description: "Content of the source (use @file to read from a file)",
+      },
+      file: {
+        type: "string",
+        alias: "f",
+        description: "Path to a file to ingest as content",
+      },
+      url: {
+        type: "string",
+        alias: "u",
+        description: "Original URL for this source",
+      },
+      "page-type": {
+        type: "string",
+        description: "Wiki page type to create (auto-detected if omitted)",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const sourceType = posArg(ctx, 0);
+    const title = posArg(ctx, 1);
+    const contentFlag = ctx.args.content as string | undefined;
+    const filePath = ctx.args.file as string | undefined;
+    const url = ctx.args.url as string | undefined;
+    const pageType = ctx.args["page-type"] as string | undefined;
+
+    if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      console.error("❌ Wiki not initialized. Run `wiki init` first.");
+      process.exit(1);
+    }
+
+    let content = "";
+    if (filePath) {
+      try {
+        content = fs.readFileSync(filePath, "utf-8");
+      } catch (err) {
+        console.error(`❌ Could not read file: ${filePath}`);
+        process.exit(1);
+      }
+    } else if (contentFlag) {
+      content = contentFlag;
+    } else {
+      // Read from stdin
+      console.error("📖 Reading from stdin... (pass --content or --file for direct input)");
+      content = fs.readFileSync("/dev/stdin", "utf-8");
+    }
+
+    if (!content.trim()) {
+      console.error("❌ No content provided. Use --content, --file, or pipe content via stdin.");
+      process.exit(1);
+    }
+
+    const store = await getStore(rootDir);
+    if (!store) return;
+
+    const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+    const { ingestSource } = await import("./operations/source.js");
+
+    const result = ingestSource(wikiPath, rootDir, sourceType as any, title, content, store, {
+      url,
+      pageType,
+    });
+
+    const { updateIndex } = await import("./operations/ingest.js");
+    updateIndex(wikiPath, store);
+
+    if (result.errors.length > 0) {
+      console.error(`⚠️ Source ingested with errors:`);
+      for (const err of result.errors) console.error(`  ${err}`);
+    } else {
+      console.log(`✅ Source ingested:`);
+    }
+
+    console.log(`  Manifest: ${result.manifestId}`);
+    console.log(`  Pages created: ${result.pagesCreated.join(", ") || "none"}`);
+    console.log(`  Pages updated: ${result.pagesUpdated.join(", ") || "none"}`);
+    console.log(`  Source path: ${result.sourcePath}`);
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ success: true, manifestId: result.manifestId, pagesCreated: result.pagesCreated, pagesUpdated: result.pagesUpdated }));
+    }
+
+    closeStore(store);
+  })
+
+  // ─── ingest-url ────────────────────────────────────────────────────────
+  .command("ingest-url", {
+    description: "Fetch a web page and ingest it into the wiki",
+    args: [
+      { name: "url", description: "URL to fetch and ingest", required: true },
+    ],
+    flags: {
+      title: {
+        type: "string",
+        alias: "t",
+        description: "Override title (auto-detected if omitted)",
+      },
+      "page-type": {
+        type: "string",
+        description: "Wiki page type to create",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const url = posArg(ctx, 0);
+    const title = ctx.args.title as string | undefined;
+    const pageType = ctx.args["page-type"] as string | undefined;
+
+    if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      console.error("❌ Wiki not initialized. Run `wiki init` first.");
+      process.exit(1);
+    }
+
+    const store = await getStore(rootDir);
+    if (!store) return;
+
+    const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+    console.log(`📖 Fetching ${url}...`);
+
+    const { ingestUrl } = await import("./operations/source.js");
+    const result = await ingestUrl(wikiPath, rootDir, url, store, { title, pageType });
+
+    const { updateIndex } = await import("./operations/ingest.js");
+    updateIndex(wikiPath, store);
+
+    if (result.errors.length > 0) {
+      console.error(`⚠️ URL ingested with errors:`);
+      for (const err of result.errors) console.error(`  ${err}`);
+    } else {
+      console.log(`✅ URL ingested:`);
+    }
+
+    console.log(`  Title: ${result.title}`);
+    console.log(`  Content length: ${result.contentLength} chars`);
+    console.log(`  Pages created: ${result.pagesCreated.join(", ") || "none"}`);
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ success: true, manifestId: result.manifestId, title: result.title, contentLength: result.contentLength }));
+    }
+
+    closeStore(store);
+  })
+
+  // ─── sources ────────────────────────────────────────────────────────────
+  .command("sources", {
+    description: "List all ingested sources",
+    args: [],
+    flags: {
+      type: {
+        type: "string",
+        alias: "t",
+        description: "Filter by source type (article, note, url, git-commits, etc.)",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const typeFilter = ctx.args.type as string | undefined;
+
+    if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      console.error("❌ Wiki not initialized. Run `wiki init` first.");
+      process.exit(1);
+    }
+
+    const store = await getStore(rootDir);
+    if (!store) return;
+
+    const sources = typeFilter ? store.getSources(typeFilter) : store.getSources();
+    const count = store.getSourceCount();
+
+    console.log(`\n📖 Wiki Sources (${count.total} total)\n`);
+
+    for (const [type, num] of Object.entries(count.byType)) {
+      console.log(`  ${type}: ${num}`);
+    }
+
+    if (sources.length > 0) {
+      console.log(`\nRecent sources:`);
+      for (const s of sources.slice(0, 20)) {
+        const date = s.ingestedAt.split("T")[0];
+        console.log(`  [${date}] ${s.type}: ${s.title} (${s.id})`);
+      }
+    }
+
+    if (ctx.args.json) {
+      console.log(JSON.stringify({ total: count.total, byType: count.byType, sources: sources.map(s => ({ id: s.id, type: s.type, title: s.title, ingestedAt: s.ingestedAt, pagesCreated: s.pagesCreated })) }));
+    }
+
+    closeStore(store);
   })
 
   .run();

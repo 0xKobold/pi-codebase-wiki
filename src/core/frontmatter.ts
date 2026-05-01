@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+
 /**
  * Frontmatter Module — Parse and serialize YAML frontmatter for wiki pages.
  *
@@ -95,7 +98,6 @@ export function hasFrontmatter(content: string): boolean {
  * Returns empty object if no frontmatter or file doesn't exist.
  */
 export function readFileMetadata(filePath: string): Record<string, any> {
-  const fs = require("fs");
   try {
     const content = fs.readFileSync(filePath, "utf-8");
     const { metadata } = parseFrontmatter(content);
@@ -110,7 +112,6 @@ export function readFileMetadata(filePath: string): Record<string, any> {
  * If the file has frontmatter, update it. If not, add it.
  */
 export function writeFileMetadata(filePath: string, metadata: Record<string, any>): void {
-  const fs = require("fs");
   try {
     const content = fs.readFileSync(filePath, "utf-8");
     const { metadata: existing, body } = parseFrontmatter(content);

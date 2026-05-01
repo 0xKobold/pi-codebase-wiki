@@ -40,6 +40,19 @@ export {
 export { searchWiki, getPageContent, getRelatedPages } from "../operations/query.js";
 export { lintWiki, formatLintResult } from "../operations/lint.js";
 
+export {
+  ingestSource,
+  ingestUrl,
+  storeSource,
+  generateSourceId,
+  computeHash,
+  appendLogEntry,
+  parseLog,
+  getRecentLog,
+  createGitSourceManifest,
+} from "../operations/source.js";
+export type { IngestSourceResult, IngestUrlResult, LogEntry } from "../operations/source.js";
+
 export { enrichAllEntities } from "./smart-ingest.js";
 export { generateEnrichmentBatch, formatEnrichmentMessage } from "./llm-enrich.js";
 export type { EnrichmentPrompt } from "./llm-enrich.js";

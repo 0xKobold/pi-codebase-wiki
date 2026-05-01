@@ -26,7 +26,7 @@ import {
   ensureWikiDirs,
 } from "./core/config.js";
 import type { WikiConfig, GitCommit, LintResult } from "./shared.js";
-import { DEFAULT_WIKI_CONFIG, toSlug, formatWikiDate, validateSlug } from "./shared.js";
+import { DEFAULT_WIKI_CONFIG, toSlug, formatWikiDate, validateSlug, getDirectoryForPageType } from "./shared.js";
 import {
   initWiki,
   ingestCommits,
@@ -383,7 +383,8 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       // "Today's query becomes tomorrow's cross-reference."
       if (result.matches.length >= 2) {
         const slug = toSlug(question);
-        const queryFilePath = path.join(wikiPath, "queries", `${slug}.md`);
+        const queryDirName = getDirectoryForPageType("query", state.config.pageTypes);
+        const queryFilePath = path.join(wikiPath, queryDirName, `${slug}.md`);
         const existingPage = store.getPage(slug);
         if (!existingPage) {
           const matchedIds = result.matches.map(m => m.page.id).join(", ");
@@ -404,12 +405,12 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           queryContent.push("", "## Open Questions", "", "(to be discovered through further analysis)", "");
           queryContent.push(`---`, `*Filed by wiki_query on ${today}*`);
 
-          fs.mkdirSync(path.join(wikiPath, "queries"), { recursive: true });
+          fs.mkdirSync(path.join(wikiPath, queryDirName), { recursive: true });
           fs.writeFileSync(queryFilePath, queryContent.join("\n"), "utf-8");
 
           store.upsertPage({
             id: slug,
-            path: `queries/${slug}.md`,
+            path: `${queryDirName}/${slug}.md`,
             type: "query",
             title: question,
             summary: `Query: ${question} — ${result.matches.length} matches: ${matchedIds}`,
@@ -516,6 +517,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const stats = store.getStats();
       const branch = getCurrentBranch(ctx.cwd);
       const lastHash = getLatestHash(ctx.cwd);
+      const sourceCount = store.getSourceCount();
 
       const lines: string[] = [
         `📖 **Codebase Wiki Status**`,
@@ -530,6 +532,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       lines.push(`| Stale pages | ${stats.stalePages} |`);
+      lines.push(`| Sources | ${sourceCount.total} |`);
       lines.push(`| Last ingest | ${stats.lastIngest ?? "never"} |`);
       lines.push(`| Git branch | ${branch} |`);
       lines.push(`| Latest hash | ${lastHash?.slice(0, 7) ?? "unknown"} |`);
@@ -582,7 +585,8 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
-      const entityDir = path.join(wikiPath, "entities");
+      const entityDirName = getDirectoryForPageType("entity", state.config.pageTypes);
+      const entityDir = path.join(wikiPath, entityDirName);
       const fileName = name.toLowerCase().replace(/[^a-z0-9]/g, "-");
       const filePath = path.join(entityDir, `${fileName}.md`);
 
@@ -659,19 +663,20 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const adrNumber = String(decisions.length + 1).padStart(3, "0");
       const slug = `adr-${adrNumber}-${title.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
       const fileName = slug.slice(0, 80); // Cap length
-      const filePath = path.join(wikiPath, "decisions", `${fileName}.md`);
+      const decisionDirName = getDirectoryForPageType("decision", state.config.pageTypes);
+      const filePath = path.join(wikiPath, decisionDirName, `${fileName}.md`);
 
       const today = new Date().toISOString().split("T")[0];
 
       const displayStatus = status.charAt(0).toUpperCase() + status.slice(1);
       const content = `# ADR-${adrNumber}: ${title}\n\n> **Status**: ${displayStatus}\n\n## Context\n${context}\n\n## Decision\n${decision}\n\n## Consequences\n- (to be determined)\n\n## Alternatives Considered\n${alternatives || "- None documented yet"}\n\n## References\n- Created: ${today}\n\n## See Also\n- [[index]]\n`;
 
-      fs.mkdirSync(path.join(wikiPath, "decisions"), { recursive: true });
+      fs.mkdirSync(path.join(wikiPath, decisionDirName), { recursive: true });
       fs.writeFileSync(filePath, content, "utf-8");
 
       store.upsertPage({
         id: fileName,
-        path: `decisions/${fileName}.md`,
+        path: `${decisionDirName}/${fileName}.md`,
         type: "decision",
         title: `ADR-${adrNumber}: ${title}`,
         summary: decision.slice(0, 200),
@@ -720,7 +725,8 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
       const slug = toSlug(name);
-      const conceptDir = path.join(wikiPath, "concepts");
+      const conceptDirName = getDirectoryForPageType("concept", state.config.pageTypes);
+      const conceptDir = path.join(wikiPath, conceptDirName);
       const filePath = path.join(conceptDir, slug + ".md");
       const today = formatWikiDate(new Date());
 
@@ -755,7 +761,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       store.upsertPage({
         id: slug,
-        path: "concepts/" + slug + ".md",
+        path: `${conceptDirName}/${slug}.md`,
         type: "concept",
         title: name,
         summary: summary,
@@ -945,8 +951,9 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       // Karpathy pattern: persist evolution pages to disk (merge with existing)
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
-      const evolvePath = path.join(wikiPath, "evolution", `${slug}.md`);
-      fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
+      const evolutionDirName = getDirectoryForPageType("evolution", state.config.pageTypes);
+      const evolvePath = path.join(wikiPath, evolutionDirName, `${slug}.md`);
+      fs.mkdirSync(path.join(wikiPath, evolutionDirName), { recursive: true });
 
       // Merge new timeline entries with existing evolution page
       let existingContent: string | null = null;
@@ -985,7 +992,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       if (store) {
         store.upsertPage({
           id: `evolution-${slug}`,
-          path: `evolution/${slug}.md`,
+          path: `${evolutionDirName}/${slug}.md`,
           type: "evolution",
           title: `Evolution of ${feature}`,
           summary: `${related.length} commits touch ${feature} over its history`,
@@ -1216,5 +1223,172 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
     },
   });
 
-  console.log("[CodebaseWiki] Extension loaded — /wiki, /wiki-init, /wiki-ingest, /wiki-lint, /wiki-query, /wiki-reindex");
+  // ═══════════════════════════════════════════════════════════════════════
+  // PHASE 1: SOURCE INGESTION TOOLS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─── wiki_ingest_source ─────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_ingest_source",
+    label: "Wiki Ingest Source",
+    description: "Ingest an arbitrary source (article, note, conversation, etc.) into the wiki. The content is stored immutably and a wiki page is created.",
+    promptSnippet: "Ingest a source into the wiki",
+    promptGuidelines: [
+      "Use wiki_ingest_source to add articles, notes, conversations, or other content to the wiki",
+      "The source is stored immutably — the wiki page is the compiled artifact",
+    ],
+    parameters: Type.Object({
+      type: Type.Union([
+        Type.Literal("article"),
+        Type.Literal("note"),
+        Type.Literal("conversation"),
+        Type.Literal("document"),
+        Type.Literal("url"),
+        Type.Literal("media"),
+        Type.Literal("manual"),
+      ], { description: "Type of source content" }),
+      title: Type.String({ description: "Title for the source" }),
+      content: Type.String({ description: "Raw content of the source" }),
+      url: Type.Optional(Type.String({ description: "Original URL if this was fetched from the web" })),
+      pageType: Type.Optional(Type.String({ description: "Wiki page type to create (auto-detected if omitted)" })),
+      updateExisting: Type.Optional(Type.Array(Type.String(), { description: "Page IDs to update with this source reference" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { type, title, content, url, pageType, updateExisting } = params as {
+        type: string; title: string; content: string; url?: string; pageType?: string; updateExisting?: string[];
+      };
+
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        return {
+          content: [{ type: "text", text: "Wiki not initialized. Run `/wiki-init` first." }],
+          details: { success: false, reason: "not_initialized" },
+        };
+      }
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "Store initialization failed." }], details: { success: false } };
+      }
+
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+
+      const { ingestSource } = await import("./operations/source.js");
+      const result = ingestSource(wikiPath, ctx.cwd, type as any, title, content, store, {
+        url,
+        pageType,
+        updateExisting,
+      });
+
+      if (result.errors.length > 0) {
+        return {
+          content: [{ type: "text", text: `⚠️ Source ingested with errors:\n\nManifest: ${result.manifestId}\nCreated: ${result.pagesCreated.join(", ") || "none"}\nUpdated: ${result.pagesUpdated.join(", ") || "none"}\nErrors: ${result.errors.join("; ")}` }],
+          details: { success: false, manifestId: result.manifestId, errors: result.errors },
+        };
+      }
+
+      // Update the index after creating pages
+      const { updateIndex } = await import("./operations/ingest.js");
+      updateIndex(wikiPath, store);
+
+      return {
+        content: [{ type: "text", text: `✅ Source ingested:\n\n**Manifest**: \`${result.manifestId}\`\n**Type**: ${type}\n**Title**: ${title}\n**Pages created**: ${result.pagesCreated.join(", ") || "none"}\n**Pages updated**: ${result.pagesUpdated.join(", ") || "none"}\n**Source path**: ${result.sourcePath}` }],
+        details: { success: true, manifestId: result.manifestId, pagesCreated: result.pagesCreated, pagesUpdated: result.pagesUpdated },
+      };
+    },
+  });
+
+  // ─── wiki_ingest_url ─────────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_ingest_url",
+    label: "Wiki Ingest URL",
+    description: "Fetch a web page and ingest it into the wiki as a source.",
+    promptSnippet: "Ingest a web article into the wiki",
+    promptGuidelines: [
+      "Use wiki_ingest_url to fetch and store web articles as wiki sources",
+      "The content is extracted and stored immutably",
+    ],
+    parameters: Type.Object({
+      url: Type.String({ description: "URL to fetch and ingest" }),
+      title: Type.Optional(Type.String({ description: "Override title (auto-detected from page if omitted)" })),
+      pageType: Type.Optional(Type.String({ description: "Wiki page type to create" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { url, title, pageType } = params as { url: string; title?: string; pageType?: string };
+
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        return {
+          content: [{ type: "text", text: "Wiki not initialized. Run `/wiki-init` first." }],
+          details: { success: false, reason: "not_initialized" },
+        };
+      }
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "Store initialization failed." }], details: { success: false } };
+      }
+
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+
+      _onUpdate?.({ content: [{ type: "text", text: `📖 Fetching ${url}...` }], details: {} });
+
+      const { ingestUrl } = await import("./operations/source.js");
+      const result = await ingestUrl(wikiPath, ctx.cwd, url, store, { title, pageType });
+
+      if (result.errors.length > 0) {
+        return {
+          content: [{ type: "text", text: `⚠️ URL ingested with errors:\n\nManifest: ${result.manifestId}\nTitle: ${result.title}\nErrors: ${result.errors.join("; ")}` }],
+          details: { success: false, errors: result.errors },
+        };
+      }
+
+      const { updateIndex } = await import("./operations/ingest.js");
+      updateIndex(wikiPath, store);
+
+      return {
+        content: [{ type: "text", text: `✅ URL ingested:\n\n**Manifest**: \`${result.manifestId}\`\n**Title**: ${result.title}\n**Content length**: ${result.contentLength} chars\n**Pages created**: ${result.pagesCreated.join(", ") || "none"}\n**Pages updated**: ${result.pagesUpdated.join(", ") || "none"}` }],
+        details: { success: true, manifestId: result.manifestId, title: result.title },
+      };
+    },
+  });
+
+  // ─── /wiki-sources ──────────────────────────────────────────────────────
+  pi.registerCommand("wiki-sources", {
+    description: "List ingested sources",
+    handler: async (_args, ctx) => {
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        ctx.ui.notify("📖 No wiki found. Run /wiki-init first.", "info");
+        return;
+      }
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        ctx.ui.notify("❌ Failed to initialize wiki store.", "error");
+        return;
+      }
+
+      const sources = store.getSources();
+      const count = store.getSourceCount();
+
+      const lines = [
+        `📖 **Wiki Sources** (${count.total} total)`,
+        "",
+      ];
+
+      for (const [type, num] of Object.entries(count.byType)) {
+        lines.push(`- ${type}: ${num}`);
+      }
+
+      if (sources.length > 0) {
+        lines.push("");
+        lines.push("**Recent sources:**");
+        for (const s of sources.slice(0, 10)) {
+          lines.push(`- \`${s.id}\` — ${s.title} (${s.type}, ${s.ingestedAt.split("T")[0]})`);
+        }
+      }
+
+      ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  console.log("[CodebaseWiki] Extension loaded — /wiki, /wiki-init, /wiki-ingest, /wiki-lint, /wiki-query, /wiki-reindex, /wiki-sources");
 }

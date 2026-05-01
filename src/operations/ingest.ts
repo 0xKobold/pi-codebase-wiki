@@ -29,6 +29,7 @@ import {
 } from "../core/indexer.js";
 import type { WikiConfig, IngestConfig } from "../shared.js";
 import { DEFAULT_INGEST_CONFIG } from "../shared.js";
+import { createGitSourceManifest } from "./source.js";
 import {
   ensureWikiDirs,
   generateSchemaMD,
@@ -244,8 +245,20 @@ export async function ingestCommits(
   // Update INDEX.md
   updateIndex(wikiPath, store);
 
-  // Update LOG.md
+  // Update LOG.md (structured format)
   appendToLog(wikiPath, result);
+
+  // Create source manifest for this ingest
+  if (result.commitsProcessed > 0) {
+    const lastCommit = ingestibleCommits[ingestibleCommits.length - 1];
+    const firstCommit = ingestibleCommits[0];
+    const range = firstCommit && lastCommit
+      ? `${firstCommit.hash.slice(0, 7)}..${lastCommit.hash.slice(0, 7)}`
+      : since;
+    // Note: ingestResult tracks counts, not specific page IDs
+    // We pass empty arrays here; individual page IDs are tracked via store.upsertPage
+    createGitSourceManifest(wikiPath, store, range, [], []);
+  }
 
   return result;
 }
