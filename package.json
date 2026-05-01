@@ -2,7 +2,14 @@
   "name": "@0xkobold/pi-codebase-wiki",
   "version": "0.7.0",
   "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
-  "keywords": ["pi-package", "wiki", "codebase", "cli", "agent", "kapy"],
+  "keywords": [
+    "pi-package",
+    "wiki",
+    "codebase",
+    "cli",
+    "agent",
+    "kapy"
+  ],
   "main": "./src/index.ts",
   "bin": {
     "wiki": "./src/cli.ts"
@@ -17,10 +24,18 @@
       "types": "./src/core/index.ts"
     }
   },
-  "files": ["src/", "skills/", "web/"],
+  "files": [
+    "src/",
+    "skills/",
+    "web/"
+  ],
   "pi": {
-    "extensions": ["./src/index.ts"],
-    "skills": ["./skills/codebase-wiki/SKILL.md"]
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills/codebase-wiki/SKILL.md"
+    ]
   },
   "dependencies": {
     "@moikapy/kapy": "0.3.0",
@@ -36,5 +51,9 @@
     "prepublishOnly": "rm -rf dist && tsc",
     "test": "bun test"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "bun-types": "^1.3.13",
+    "typescript": "^6.0.3"
+  }
 }

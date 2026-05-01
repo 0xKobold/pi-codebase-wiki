@@ -156,7 +156,7 @@ export class WikiStore {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    writeFileSync(this.dbPath, Buffer.from(data));
+    writeFileSync(this.dbPath, new Uint8Array(data));
   }
 
   close(): void {

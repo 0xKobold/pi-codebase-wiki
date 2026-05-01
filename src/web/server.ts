@@ -43,7 +43,7 @@ export async function serveWiki(rootDir: string, config: WikiConfig, options: Se
       if (url.pathname.startsWith("/pages/")) {
         const filePath = path.join(wikiPath, url.pathname.slice(1));
         if (fs.existsSync(filePath)) {
-          return new Response(fs.readFileSync(filePath), {
+          return new Response(new Uint8Array(fs.readFileSync(filePath)), {
             headers: { "Content-Type": getContentType(filePath) },
           });
         }
