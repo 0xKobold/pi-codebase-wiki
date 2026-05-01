@@ -26,7 +26,7 @@ coverage/
 *.temp
 
 # Wiki data (generated at runtime)
-.codebase-wiki/meta/wiki.db
+.codebase-wiki/
 
 # Pi agent sessions
 .pi/

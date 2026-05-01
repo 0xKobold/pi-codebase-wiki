@@ -42,6 +42,7 @@ export class WikiStore {
   /**
    * Initialize the database. Loads existing or creates new.
    * sql.js WASM binary is located automatically via the package.
+   * Also registers a process exit handler to ensure data is saved.
    */
   async init(): Promise<void> {
     console.assert(this.db === null, "db should not be initialized twice");
@@ -61,6 +62,17 @@ export class WikiStore {
     }
 
     this.runMigrations();
+
+    // Ensure data is saved on process exit to prevent data loss
+    const self = this;
+    const exitHandler = () => {
+      if (self.db) {
+        self.save();
+      }
+    };
+    process.on("exit", exitHandler);
+    process.on("SIGINT", exitHandler);
+    process.on("SIGTERM", exitHandler);
   }
 
   private createTables(): void {
@@ -157,6 +169,10 @@ export class WikiStore {
       this.db.close();
       this.db = null;
     }
+    // Remove exit handlers to prevent double-save
+    process.removeAllListeners("exit");
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
   }
 
   // ============================================================================

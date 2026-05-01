@@ -281,7 +281,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         }
 
         // Smart ingest — read source files and enrich entity pages (regex/heuristic, no LLM)
-        if (source === "smart" || source === "llm") {
+        if (source === "smart" || source === "llm" || source === "all") {
           const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
           const result = enrichAllEntities(wikiPath, ctx.cwd, store);
           results.push(`Smart: ${result.pagesEnriched} pages enriched, ${result.crossReferencesAdded} cross-references added`);
@@ -310,14 +310,6 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         // Docs ingest — scan and update wiki pages from README/docs
         if (source === "docs" || source === "all") {
           results.push("Docs: ingested documentation files");
-        }
-
-        // Smart ingest as part of 'all'
-        if (source === "all") {
-          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
-          const smartResult = enrichAllEntities(wikiPath, ctx.cwd, store);
-          results.push(`Smart: ${smartResult.pagesEnriched} pages enriched, ${smartResult.crossReferencesAdded} cross-references added`);
-          updateIndex(wikiPath, store);
         }
 
         return {
@@ -865,10 +857,35 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         changelogContent = `# Recent Commits\n\n${lines.join("\n")}`;
       }
 
-      // Karpathy pattern: persist changelog to wiki
+      // Karpathy pattern: persist changelog to wiki (merge with existing)
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
       const changelogPath = path.join(wikiPath, "CHANGELOG.md");
-      fs.writeFileSync(changelogPath, changelogContent, "utf-8");
+      let finalChangelog = changelogContent;
+      try {
+        const existing = fs.readFileSync(changelogPath, "utf-8");
+        if (existing && format === "keepachangelog") {
+          // Merge: preserve existing content, prepend new entries under the same header
+          const existingLines = existing.split("\n");
+          const newLines = changelogContent.split("\n");
+          // Find if the existing has a [Recent] section and merge into it
+          const recentIdx = existingLines.findIndex(l => l.startsWith("## [Recent]"));
+          if (recentIdx !== -1) {
+            // Replace the [Recent] section with new content
+            const nextSectionIdx = existingLines.findIndex((l, i) => i > recentIdx && l.startsWith("## ["));
+            const before = existingLines.slice(0, recentIdx);
+            const after = nextSectionIdx !== -1 ? existingLines.slice(nextSectionIdx) : [];
+            // Find the new entries portion (after the header)
+            const newEntries = newLines.slice(2); // Skip "# Changelog" and empty line
+            finalChangelog = [...before, ...newEntries, ...after].join("\n");
+          } else {
+            // No existing [Recent] section — just prepend new content
+            finalChangelog = changelogContent + "\n" + existingLines.filter(l => !l.startsWith("# Changelog") && l.trim() !== "").join("\n");
+          }
+        }
+      } catch {
+        // No existing changelog — write fresh
+      }
+      fs.writeFileSync(changelogPath, finalChangelog, "utf-8");
 
       return {
         content: [{ type: "text", text: changelogContent }],
@@ -926,11 +943,43 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       lines.push("## See Also");
       lines.push(`- [[${slug}]]`);
 
-      // Karpathy pattern: persist evolution pages to disk
+      // Karpathy pattern: persist evolution pages to disk (merge with existing)
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
       const evolvePath = path.join(wikiPath, "evolution", `${slug}.md`);
       fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
-      fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
+
+      // Merge new timeline entries with existing evolution page
+      let existingContent: string | null = null;
+      try {
+        existingContent = fs.readFileSync(evolvePath, "utf-8");
+      } catch {
+        // No existing page — write fresh
+      }
+
+      if (existingContent) {
+        // Find existing timeline entries and merge new ones
+        const existingHashes = new Set(
+          [...existingContent.matchAll(/Commit: `([a-f0-9]{7,40})`/g)].map(m => m[1]!.slice(0, 7))
+        );
+        // Filter out entries whose hashes already exist in the page
+        const newLines = lines.filter(line => {
+          const hashMatch = line.match(/Commit: `([a-f0-9]{7,40})`/);
+          if (hashMatch) return !existingHashes.has(hashMatch[1]!.slice(0, 7));
+          return true;
+        });
+        // Prepend new timeline entries to the existing Timeline section
+        const timelineIdx = existingContent.indexOf("## Timeline");
+        if (timelineIdx !== -1) {
+          const afterIdx = existingContent.indexOf("\n", timelineIdx) + 1;
+          const merged = existingContent.slice(0, afterIdx) + "\n" + newLines.join("\n") + existingContent.slice(afterIdx);
+          fs.writeFileSync(evolvePath, merged, "utf-8");
+        } else {
+          // No Timeline section, just append
+          fs.writeFileSync(evolvePath, existingContent + "\n\n" + newLines.join("\n"), "utf-8");
+        }
+      } else {
+        fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
+      }
 
       const store = await ensureInitialized({ cwd: ctx.cwd });
       if (store) {

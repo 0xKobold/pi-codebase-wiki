@@ -400,7 +400,8 @@ export function inferEntityFromPath(filePath: string): string {
     if (parts[2]!.endsWith(".ts") || parts[2]!.endsWith(".tsx")) {
       return parts[1]!;
     }
-    return `${parts[1]}/${parts[2]!.replace(/\.[^.]+$/, "")}`;
+    // Nested directory: normalize / to - for slug compatibility (validateSlug rejects /)
+    return `${parts[1]}-${parts[2]!.replace(/\.[^.]+$/, "")}`;
   }
 
   // Fallback: use filename without extension

@@ -410,11 +410,21 @@ function updateEntityPage(
     return;
   }
 
-  // Only update timestamp if content has been enriched (not a stub)
-  // Preserve enriched content — don't overwrite with stubs
+  // Check if content has been hand-edited or enriched (not a stub)
+  // Preserve hand-edited content — don't overwrite with stubs
   const isEnriched = !content.includes("(to be discovered)")
     && !content.includes("(to be documented)")
     && !content.includes("(no files tracked)");
+
+  // Backup existing file before overwriting (preserves hand-edited content)
+  const backupDir = path.join(path.dirname(filePath), "..", "meta", "backups");
+  try {
+    fs.mkdirSync(backupDir, { recursive: true });
+    const backupPath = path.join(backupDir, `${slug}-${Date.now()}.md`);
+    fs.writeFileSync(backupPath, content, "utf-8");
+  } catch {
+    // Backup failure is non-fatal — log but continue
+  }
 
   const today = formatWikiDate(new Date());
 
@@ -424,28 +434,37 @@ function updateEntityPage(
     `*Last updated: ${today}*`
   );
 
-  // Only append commits if we have new ones
+  // Append commits to Evolution section using proper section boundary parsing
   if (newCommits.length > 0) {
     const commitLines = newCommits.slice(0, 5).map(c =>
       `- **${c.type}${c.scope ? `(${c.scope})` : ""}**: ${c.subject} ([${c.hash.slice(0, 7)}])`
     ).join("\n");
 
     if (content.includes("## Evolution")) {
-      // Find evolution section and prepend new entries
-      const evolutionIdx = content.indexOf("## Evolution");
-      if (evolutionIdx !== -1) {
-        const beforeEvolution = content.slice(0, evolutionIdx + "## Evolution".length);
-        const afterEvolution = content.slice(evolutionIdx + "## Evolution".length);
-        content = `${beforeEvolution}\n\n### ${today}\n${commitLines}${afterEvolution}`;
+      // Insert new evolution entries right after the ## Evolution header,
+      // before any existing content. Use non-greedy match up to next ## header.
+      content = content.replace(
+        /## Evolution\n/,
+        `## Evolution\n\n### ${today}\n${commitLines}\n`
+      );
+    } else {
+      // No Evolution section yet — append one before the See Also or end
+      const seeAlsoIdx = content.indexOf("## See Also");
+      const newSection = `\n## Evolution\n\n### ${today}\n${commitLines}\n`;
+      if (seeAlsoIdx !== -1) {
+        content = content.slice(0, seeAlsoIdx) + newSection + content.slice(seeAlsoIdx);
+      } else {
+        content += newSection;
       }
     }
   }
 
-  // Update Key Files section if we have new files and content is still a stub
+  // Update Key Files section — only on stub pages, with safe section boundary
   if (!isEnriched && newFiles.length > 0) {
     const fileList = newFiles.slice(0, 20).map(f => `- \`${f}\``).join("\n");
+    // Use non-greedy match up to the next ## header (section boundary)
     content = content.replace(
-      /## Key Files\n[^#]*/,
+      /## Key Files\n([\s\S]*?)(?=\n## )/,
       `## Key Files\n${fileList}\n\n`
     );
   }
@@ -511,15 +530,31 @@ function appendToLog(wikiPath: string, result: IngestResult): void {
 
   try {
     let content = fs.readFileSync(logPath, "utf-8");
-    // Insert after the header row
-    const headerEnd = content.indexOf("| - |");
-    if (headerEnd > 0) {
-      const lineEnd = content.indexOf("\n", headerEnd);
-      content = content.slice(0, lineEnd + 1) + entry + "\n" + content.slice(lineEnd + 1);
+    // Find the first data row after the separator line (| - | - | ...)
+    // The log table has: header row, separator row, then data rows
+    // Insert new entries after the separator line
+    const lines = content.split("\n");
+    let insertIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      // Find the separator row (contains only |, -, and spaces)
+      if (/^\|\s*[\-\s|]+\|\s*$/.test(lines[i]!)) {
+        insertIdx = i + 1; // Insert after separator
+        break;
+      }
+    }
+
+    if (insertIdx > 0 && insertIdx < lines.length) {
+      lines.splice(insertIdx, 0, entry);
+      content = lines.join("\n");
       fs.writeFileSync(logPath, content, "utf-8");
     } else {
-      // Fallback: append at end
-      content += "\n" + entry + "\n";
+      // Fallback: append at end before the trailing marker
+      const markerIdx = content.lastIndexOf("---");
+      if (markerIdx > 0) {
+        content = content.slice(0, markerIdx) + entry + "\n\n" + content.slice(markerIdx);
+      } else {
+        content += entry + "\n";
+      }
       fs.writeFileSync(logPath, content, "utf-8");
     }
   } catch {

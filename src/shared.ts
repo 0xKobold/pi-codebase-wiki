@@ -5,6 +5,8 @@
  * Follows NASA-10 coding rules: small functions, minimal scope, validation.
  */
 
+import * as fs from "fs";
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -287,10 +289,9 @@ export function estimateTokens(text: string): number {
 /**
  * Safely read file, returning null on error
  */
-export function safeReadFile(path: string): string | null {
+export function safeReadFile(filePath: string): string | null {
   try {
-    const { readFileSync } = require("fs");
-    return readFileSync(path, "utf-8");
+    return fs.readFileSync(filePath, "utf-8");
   } catch {
     return null;
   }

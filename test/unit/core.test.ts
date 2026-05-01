@@ -264,8 +264,8 @@ describe("inferEntityFromPath", () => {
   });
 
   test("infers nested directory from src/ path", () => {
-    // parts[1]="extensions", parts[2]="core" (not a .ts file)
-    expect(inferEntityFromPath("src/extensions/core/git-commit.ts")).toBe("extensions/core");
+    // parts[1]="extensions", parts[2]="core" (not a .ts file) — normalized to kebab-case
+    expect(inferEntityFromPath("src/extensions/core/git-commit.ts")).toBe("extensions-core");
   });
 
   test("falls back to filename", () => {

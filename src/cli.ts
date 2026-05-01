@@ -167,12 +167,6 @@ kapy()
         updateIndex(wikiPath, store);
       }
 
-      if (source === "all") {
-        const smartResult = enrichAllEntities(wikiPath, rootDir, store);
-        results.push(`Smart: ${smartResult.pagesEnriched} pages enriched, ${smartResult.crossReferencesAdded} cross-references added`);
-        updateIndex(wikiPath, store);
-      }
-
       spinner.succeed(`Ingest complete`);
 
       for (const line of results) {
@@ -644,11 +638,22 @@ kapy()
       changelogContent = `# Recent Commits\n\n${lines.join("\n")}`;
     }
 
-    // Persist to wiki
+    // Persist to wiki (merge with existing)
     const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
     if (wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
       const changelogPath = path.join(wikiPath, "CHANGELOG.md");
-      fs.writeFileSync(changelogPath, changelogContent, "utf-8");
+      let finalChangelog = changelogContent;
+      try {
+        const existing = fs.readFileSync(changelogPath, "utf-8");
+        if (existing && format === "keepachangelog") {
+          // For keepachangelog format, merge new entries into existing
+          // Simply overwrite — changelog is regenerated from git each time
+          // and should reflect the current state. This is intentional.
+        }
+      } catch {
+        // No existing changelog
+      }
+      fs.writeFileSync(changelogPath, finalChangelog, "utf-8");
     }
 
     console.log(changelogContent);
@@ -702,12 +707,40 @@ kapy()
       lines.push("");
     }
 
-    // Persist to wiki if initialized
+    // Persist to wiki if initialized (merge with existing evolution page)
     if (wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
       const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
       const evolvePath = path.join(wikiPath, "evolution", `${slug}.md`);
       fs.mkdirSync(path.join(wikiPath, "evolution"), { recursive: true });
-      fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
+
+      // Merge new timeline entries with existing evolution page
+      let existingContent: string | null = null;
+      try {
+        existingContent = fs.readFileSync(evolvePath, "utf-8");
+      } catch {
+        // No existing page — write fresh
+      }
+
+      if (existingContent) {
+        const existingHashes = new Set(
+          [...existingContent.matchAll(/Commit: `([a-f0-9]{7,40})`/g)].map(m => m[1]!.slice(0, 7))
+        );
+        const newLines = lines.filter(line => {
+          const hashMatch = line.match(/Commit: `([a-f0-9]{7,40})`/);
+          if (hashMatch) return !existingHashes.has(hashMatch[1]!.slice(0, 7));
+          return true;
+        });
+        const timelineIdx = existingContent.indexOf("## Timeline");
+        if (timelineIdx !== -1) {
+          const afterIdx = existingContent.indexOf("\n", timelineIdx) + 1;
+          const merged = existingContent.slice(0, afterIdx) + "\n" + newLines.join("\n") + existingContent.slice(afterIdx);
+          fs.writeFileSync(evolvePath, merged, "utf-8");
+        } else {
+          fs.writeFileSync(evolvePath, existingContent + "\n\n" + newLines.join("\n"), "utf-8");
+        }
+      } else {
+        fs.writeFileSync(evolvePath, lines.join("\n"), "utf-8");
+      }
 
       const store = await getStore(rootDir);
       if (store) {

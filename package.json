@@ -1,6 +1,6 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
   "keywords": ["pi-package", "wiki", "codebase", "cli", "agent", "kapy"],
   "main": "./src/index.ts",
@@ -23,12 +23,12 @@
     "skills": ["./skills/codebase-wiki/SKILL.md"]
   },
   "dependencies": {
-    "@moikapy/kapy": "0.2.1",
-    "sql.js": "^1.11.0"
+    "@moikapy/kapy": "0.3.0",
+    "sql.js": "^1.14.1"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": ">=0.62.0",
-    "@sinclair/typebox": ">=0.32.0"
+    "@mariozechner/pi-coding-agent": "^0.71.1",
+    "@sinclair/typebox": "^0.34.49"
   },
   "scripts": {
     "build": "tsc",
