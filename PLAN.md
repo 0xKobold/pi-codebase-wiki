@@ -258,66 +258,41 @@ This is the biggest gap between current and LLM Wiki. Right now, "ingest" means 
 
 ---
 
-## Phase 5: Human-in-the-Loop Ingestion (1-2 days)
+## Phase 5: Human-in-the-Loop Ingestion ✅ DONE
 
-> **Goal**: Users can review what the wiki will do before it does it. The "guided" mode from Karpathy's LLM Wiki pattern.
+> Committed as `8e707e5`
 
-Current behavior: ingest creates pages immediately. v2 adds a confirmation step.
+> **Goal**: Users can review what the wiki will do before it does it.
 
 ### Tasks
 
-- [ ] **5.1**: Add ingestion mode config to SCHEMA.md
-  - File: `src/core/config.ts`
-  - Parse `ingestion.mode` from SCHEMA.md: `"auto"` (default), `"confirm"`, `"guided"`
-  - Parse `ingestion.confirm_thresholds` (which actions need confirmation)
-  - `loadIngestionConfig(schemaPath: string): IngestionWorkflow`
+- [x] **5.1**: Ingestion mode config already in place (Phase 0)
+  - `ingestionMode: "auto" | "confirm" | "guided"` in WikiConfig
+  - `ingestionThresholds` for per-action confirmation settings
 
-- [ ] **5.2**: Implement ingest proposal generation
-  - File: `src/operations/proposal.ts` (NEW)
-  - `generateIngestProposal(source: SourceManifest, store: WikiStore, config: WikiConfig): Proposal`
-  - Proposal lists:
-    - Pages to create (with suggested type and title)
-    - Pages to update (with what will change)
-    - Cross-references to add
-    - Potential contradictions detected
-  - Store proposal at `.codebase-wiki/meta/proposals/{id}.json`
+- [x] **5.2**: Ingest proposal generation
+  - `src/operations/proposal.ts` — full proposal lifecycle
+  - `Proposal` type with actions (create/update), contradictions, metadata
+  - Proposals stored as JSON in `.codebase-wiki/meta/proposals/`
 
-- [ ] **5.3**: Implement confirm/guided mode in pi extension
-  - File: `src/index.ts`
-  - `auto` mode: current behavior — no changes
-  - `confirm` mode: send proposal to agent, wait for approval
-  - `guided` mode: discuss source with user before processing
-  - The extension sends a message like:
-    ```
-    📖 Ingest Proposal for "Understanding OAuth 2.0"
+- [x] **5.3**: Confirm/guided mode in pi extension
+  - `wiki_ingest_source` checks `ingestionMode` before ingesting
+  - Non-auto mode generates a proposal and returns formatted message
+  - `wiki_proposals` tool: list, show, approve, reject
 
-    New pages to create:
-    - [[oauth-flow]] (concept) — OAuth 2.0 auth flow
-    - [[oauth-security]] (concept) — Security considerations
-
-    Pages to update:
-    - [[auth-module]] — Add OAuth section
-    - [[security-concepts]] — Add reference
-
-    Cross-references to add:
-    - [[oauth-flow]] → [[auth-module]]
-
-    Proceed? (yes / no / edit)
-    ```
-
-- [ ] **5.4**: Apply/reject proposals
-  - File: `src/operations/proposal.ts`
-  - `applyIngestProposal(proposalId: string): IngestResult`
-  - `rejectIngestProposal(proposalId: string): void`
-  - `modifyIngestProposal(proposalId: string, changes: Partial<Proposal>): Proposal`
+- [x] **5.4**: Apply/reject proposals
+  - `updateProposalStatus()` changes status to approved/rejected/applied
+  - `modifyProposal()` edits actions before approving
+  - `wiki proposals` CLI command with list/show/approve/reject
 
 ### Acceptance Criteria
 
-- `ingestion.mode: auto` — current behavior, no changes
-- `ingestion.mode: confirm` — generates proposal, sends to agent for approval
-- Ingest proposals show pages to create, update, and cross-references before writing
-- Proposals stored in `.codebase-wiki/meta/proposals/`
-- Proposals can be applied, modified, or rejected
+- [x] `ingestionMode: auto` — current behavior, no changes
+- [x] `ingestionMode: confirm` — generates proposal before writing
+- [x] Proposals show pages to create, update, and cross-references
+- [x] Proposals stored in `.codebase-wiki/meta/proposals/`
+- [x] Proposals can be applied, modified, or rejected
+- [x] 194 tests, 0 TS errors
 
 ---
 
