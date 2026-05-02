@@ -39,6 +39,7 @@ import { searchWiki, getPageContent, getRelatedPages } from "./operations/query.
 import { lintWiki, formatLintResult } from "./operations/lint.js";
 import { mergePages, updatePages, splitPage, suggestResolution } from "./operations/resolve.js";
 import { findContradictionsDetailed } from "./core/staleness.js";
+import { getWikiGitHash, getWikiGitLog, initWikiGit, wikiHasChanges } from "./core/versioning.js";
 import {
   generateProposalId,
   saveProposal,
@@ -553,6 +554,14 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       lines.push(`| Last ingest | ${stats.lastIngest ?? "never"} |`);
       lines.push(`| Git branch | ${branch} |`);
       lines.push(`| Latest hash | ${lastHash?.slice(0, 7) ?? "unknown"} |`);
+
+      // Wiki git versioning status
+      const wPath = path.join(ctx.cwd, state.config.wikiDir);
+      const wikiHash = getWikiGitHash(wPath);
+      if (wikiHash) {
+        lines.push(`| Wiki git | ${wikiHash} |`);
+        lines.push(`| Uncommitted changes | ${wikiHasChanges(wPath) ? "yes" : "no"} |`);
+      }
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],

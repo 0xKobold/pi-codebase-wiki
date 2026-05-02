@@ -12,6 +12,7 @@ import { toSlug, formatWikiDate, getDirectoryForPageType, DEFAULT_PAGE_TYPES } f
 import type { PageTypeConfig } from "../shared.js";
 import type { WikiStore } from "../core/store.js";
 import type { ModuleInfo } from "../core/indexer.js";
+import { initWikiGit, wikiAutoCommit } from "../core/versioning.js";
 import {
   getRecentCommits,
   getAllCommits,
@@ -132,6 +133,9 @@ export function initWiki(
   } catch {
     // Can't write .gitignore — not fatal, just skip
   }
+
+  // Initialize wiki git repo for versioning
+  initWikiGit(wikiPath);
 
   return wikiPath;
 }
@@ -254,6 +258,8 @@ export async function ingestCommits(
     createGitSourceManifest(wikiPath, store, range, [], []);
   }
 
+  wikiAutoCommit(wikiPath, `wiki: ingest ${result.commitsProcessed} commits, ${result.pagesCreated} created, ${result.pagesUpdated} updated`);
+
   return result;
 }
 
@@ -326,6 +332,8 @@ export async function ingestFileTree(
 
   // Update INDEX.md
   updateIndex(wikiPath, store);
+
+  wikiAutoCommit(wikiPath, `wiki: ingest file tree, ${result.pagesCreated} created, ${result.filesProcessed} files`);
 
   return result;
 }
