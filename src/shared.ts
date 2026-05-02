@@ -61,6 +61,18 @@ export type LintIssueType =
   | "duplicate"
   | "empty_section";
 
+/** Resolution strategy for contradictions */
+export type ResolutionStrategy = "merge" | "update" | "split";
+
+/** Contradiction issue with structured resolution suggestion */
+export interface ContradictionIssue {
+  pageA: { id: string; path: string; title: string; type: string };
+  pageB: { id: string; path: string; title: string; type: string };
+  similarity: number;           // 0-1, Jaccard coefficient
+  suggestion: ResolutionStrategy;
+  reason: string;               // Why this strategy was suggested
+}
+
 /** Source manifest — tracks an ingested raw source */
 export interface SourceManifest {
   id: string;                     // UUID

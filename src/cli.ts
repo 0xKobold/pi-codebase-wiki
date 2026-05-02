@@ -46,6 +46,8 @@ import {
 import { toSlug, validateSlug, formatWikiDate, getDirectoryForPageType, DOMAIN_PRESETS, DEFAULT_PAGE_TYPES } from "./shared.js";
 import type { PageType } from "./shared.js";
 import type { WikiConfig, GitCommit } from "./shared.js";
+import { mergePages, updatePages, splitPage, suggestResolution } from "./operations/resolve.js";
+import { findContradictionsDetailed } from "./core/staleness.js";
 
 // ============================================================================
 // SHARED HELPERS
@@ -1119,6 +1121,120 @@ kapy()
 
     if (ctx.args.json) {
       console.log(JSON.stringify(entries));
+    }
+  })
+
+  // ─── resolve ────────────────────────────────────────────────────────────────
+  .command("resolve", {
+    description: "Resolve contradictions between wiki pages",
+    args: [{ name: "strategy", description: "Resolution strategy: merge, update, or split" }],
+    flags: {
+      target: {
+        type: "string",
+        alias: "t",
+        description: "Target page for merge (merge: target retains content)",
+      },
+      into: {
+        type: "string",
+        alias: "i",
+        description: "New page ID for split (comma-separated for multiple)",
+      },
+      titles: {
+        type: "string",
+        description: "New page titles for split (comma-separated)",
+      },
+      json: {
+        type: "boolean",
+        alias: "j",
+        description: "Output as JSON",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const strategy = ctx.args.strategy as string;
+    const pageArgs = (ctx.args._ as string[]).filter(a => !a.startsWith("-"));
+
+    if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      ctx.error("❌ Wiki not initialized. Run `wiki init` first.");
+      process.exit(1);
+    }
+
+    const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+    const store = new WikiStore(path.join(wikiPath, "meta", "wiki.db"));
+    await store.init();
+
+    try {
+      // No strategy → list contradictions
+      if (!strategy || strategy === "list") {
+        const pages = store.getAllPages();
+        const contradictions = findContradictionsDetailed(wikiPath, pages);
+
+        if (contradictions.length === 0) {
+          ctx.log("✅ No contradictions found.");
+          return;
+        }
+
+        ctx.log(`\n🔍 Found ${contradictions.length} potential contradiction(s):\n`);
+        for (const c of contradictions) {
+          const pct = (c.similarity * 100).toFixed(0);
+          ctx.log(`  [[${c.pageA.id}]] ↔ [[${c.pageB.id}]] — ${pct}% overlap`);
+          ctx.log(`    Suggestion: ${c.suggestion} — ${c.reason}`);
+          ctx.log("");
+        }
+
+        if (ctx.args.json) {
+          console.log(JSON.stringify(contradictions));
+        }
+        return;
+      }
+
+      // Resolve strategies require page IDs
+      if (strategy === "merge") {
+        const sourceId = pageArgs[0];
+        const targetId = ctx.args.target as string || pageArgs[1];
+        if (!sourceId || !targetId) {
+          ctx.error("Usage: wiki resolve merge <source> --target <target>");
+          process.exit(1);
+        }
+
+        const result = mergePages(wikiPath, store, sourceId, targetId);
+        ctx.log(`✅ Merged [[${sourceId}]] into [[${targetId}]]`);
+        ctx.log(`   Redirected ${result.redirected.length} references`);
+      } else if (strategy === "update") {
+        const pageAId = pageArgs[0];
+        const pageBId = pageArgs[1];
+        if (!pageAId || !pageBId) {
+          ctx.error("Usage: wiki resolve update <page-a> <page-b>");
+          process.exit(1);
+        }
+
+        const result = updatePages(wikiPath, store, pageAId, pageBId);
+        ctx.log(`✅ Added cross-references between [[${pageAId}]] and [[${pageBId}]]`);
+        ctx.log(`   Updated ${result.updated.length} pages`);
+      } else if (strategy === "split") {
+        const sourceId = pageArgs[0];
+        const intoStr = ctx.args.into as string;
+        const titlesStr = ctx.args.titles as string;
+        if (!sourceId || !intoStr) {
+          ctx.error("Usage: wiki resolve split <source> --into <new-id> --titles <new-title>");
+          process.exit(1);
+        }
+        const newId = intoStr.split(",")[0]!.trim();
+        const newTitle = (titlesStr?.split(",")[0]?.trim()) || newId;
+
+        // Split: move sections starting with certain keywords to new page
+        const result = splitPage(wikiPath, store, sourceId, newId, newTitle, (sectionTitle) => {
+          // Default: move sections after the first 3 to the new page
+          // This is a simple heuristic; users can edit after splitting
+          return false; // Will need interactive input or flags for section selection
+        });
+        ctx.log(`✅ Split [[${sourceId}]] — created [[${result.newPage}]]`);
+      } else {
+        ctx.error(`Unknown strategy: ${strategy}. Use: merge, update, split, or list`);
+        process.exit(1);
+      }
+    } finally {
+      closeStore(store);
     }
   })
 

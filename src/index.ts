@@ -37,6 +37,8 @@ import { enrichAllEntities } from "./core/smart-ingest.js";
 import { generateEnrichmentBatch, formatEnrichmentMessage, type EnrichmentPrompt } from "./core/llm-enrich.js";
 import { searchWiki, getPageContent, getRelatedPages } from "./operations/query.js";
 import { lintWiki, formatLintResult } from "./operations/lint.js";
+import { mergePages, updatePages, splitPage, suggestResolution } from "./operations/resolve.js";
+import { findContradictionsDetailed } from "./core/staleness.js";
 import {
   ingestSource as ingestSourceOp,
   ingestUrl as ingestUrlOp,
@@ -1230,7 +1232,104 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
   // PHASE 1: SOURCE INGESTION TOOLS
   // ═══════════════════════════════════════════════════════════════════════
 
-  // ─── wiki_ingest_source ─────────────────────────────────────────────────
+  // ─── wiki_resolve ───────────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_resolve",
+    label: "Wiki Resolve Contradiction",
+    description: "Resolve contradictions between wiki pages using merge, update (cross-reference), or split strategies.",
+    promptSnippet: "Resolve wiki contradictions",
+    parameters: Type.Object({
+      strategy: Type.Union([Type.Literal("merge"), Type.Literal("update"), Type.Literal("split"), Type.Literal("list")], { description: "Resolution strategy: merge, update, split, or list to see contradictions" }),
+      pageA: Type.Optional(Type.String({ description: "First page ID" })),
+      pageB: Type.Optional(Type.String({ description: "Second page ID (merge target or cross-ref partner)" })),
+      newPageId: Type.Optional(Type.String({ description: "New page ID for split" })),
+      newPageTitle: Type.Optional(Type.String({ description: "Title for the new split page" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { strategy, pageA, pageB, newPageId, newPageTitle } = params as any;
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "Wiki not initialized. Run wiki_ingest first." }], details: { success: false } };
+      }
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+
+    // List contradictions
+    if (strategy === "list" || !pageA) {
+      const pages = store.getAllPages();
+      const contradictions = findContradictionsDetailed(wikiPath, pages);
+
+      if (contradictions.length === 0) {
+        return {
+          content: [{ type: "text", text: "✅ No contradictions found in the wiki." }],
+          details: { success: true, contradictions: 0 },
+        };
+      }
+
+      const lines = [`Found ${contradictions.length} potential contradiction(s):`, ""];
+      for (const c of contradictions) {
+        const pct = (c.similarity * 100).toFixed(0);
+        lines.push(`- [[${c.pageA.id}]] ↔ [[${c.pageB.id}]] — ${pct}% overlap`);
+        lines.push(`  Suggestion: ${c.suggestion} — ${c.reason}`);
+      }
+
+      lines.push("", "Use wiki_resolve with strategy 'merge', 'update', or 'split' to resolve.");
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { success: true, contradictions: contradictions.length, items: contradictions },
+      };
+    }
+
+    // Merge: combine two pages
+    if (strategy === "merge") {
+      if (!pageA || !pageB) {
+        return { content: [{ type: "text", text: "❌ Merge requires pageA (source) and pageB (target)." }], details: { success: false } };
+      }
+
+      const result = mergePages(wikiPath, store, pageA, pageB);
+      updateIndex(wikiPath, store);
+
+      return {
+        content: [{ type: "text", text: `✅ Merged [[${pageA}]] into [[${pageB}]] — ${result.redirected.length} references redirected.` }],
+        details: { success: true, merged: result.merged, redirected: result.redirected },
+      };
+    }
+
+    // Update: add cross-references
+    if (strategy === "update") {
+      if (!pageA || !pageB) {
+        return { content: [{ type: "text", text: "❌ Update requires pageA and pageB." }], details: { success: false } };
+      }
+
+      const result = updatePages(wikiPath, store, pageA, pageB);
+      updateIndex(wikiPath, store);
+
+      return {
+        content: [{ type: "text", text: `✅ Added cross-references between [[${pageA}]] and [[${pageB}]] — ${result.updated.length} pages updated.` }],
+        details: { success: true, updated: result.updated },
+      };
+    }
+
+    // Split: separate a page into two
+    if (strategy === "split") {
+      if (!pageA || !newPageId) {
+        return { content: [{ type: "text", text: "❌ Split requires pageA (source) and newPageId." }], details: { success: false } };
+      }
+
+      const title = newPageTitle || newPageId;
+      const result = splitPage(wikiPath, store, pageA, newPageId, title, () => false);
+      updateIndex(wikiPath, store);
+
+      return {
+        content: [{ type: "text", text: `✅ Split [[${pageA}]] — created [[${result.newPage}]]. Review both pages and adjust sections as needed.` }],
+        details: { success: true, original: result.original, newPage: result.newPage },
+      };
+    }
+
+    return { content: [{ type: "text", text: `Unknown strategy: ${strategy}. Use: list, merge, update, or split.` }], details: { success: false } };
+    },
+  });
   pi.registerTool({
     name: "wiki_ingest_source",
     label: "Wiki Ingest Source",

@@ -7,7 +7,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import type { WikiPage, StalenessCheck, LintIssue } from "../shared.js";
+import type { WikiPage, StalenessCheck, LintIssue, ContradictionIssue, ResolutionStrategy } from "../shared.js";
 import { formatWikiDate } from "../shared.js";
 import type { WikiStore } from "./store.js";
 
@@ -333,4 +333,93 @@ export function findContradictions(
   }
 
   return issues;
+}
+
+/**
+ * Find contradictions and return structured ContradictionIssue objects
+ * with resolution suggestions.
+ */
+export function findContradictionsDetailed(
+  wikiRoot: string,
+  pages: WikiPage[]
+): ContradictionIssue[] {
+  const result: ContradictionIssue[] = [];
+  const summaries = new Map<string, { page: WikiPage; keywords: Set<string> }>();
+
+  const stopwords = new Set([
+    "module", "this", "that", "with", "from", "also",
+    "into", "been", "have", "will", "were", "they",
+    "their", "which", "would", "there", "could", "other",
+  ]);
+
+  for (const page of pages) {
+    const pagePath = path.join(wikiRoot, page.path);
+    let content = "";
+    try {
+      content = fs.readFileSync(pagePath, "utf-8").toLowerCase();
+    } catch {
+      continue;
+    }
+
+    const words = content.match(/[a-z_]{4,}/g) || [];
+    const keywords = new Set(words.filter(w => !stopwords.has(w)).slice(0, 50));
+
+    if (keywords.size > 5) {
+      summaries.set(page.id, { page, keywords });
+    }
+  }
+
+  const entries = Array.from(summaries.entries());
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const [idA, dataA] = entries[i]!;
+      const [idB, dataB] = entries[j]!;
+
+      const intersection = new Set(
+        [...dataA.keywords].filter(k => dataB.keywords.has(k))
+      );
+      const union = new Set([...dataA.keywords, ...dataB.keywords]);
+      const similarity = union.size > 0 ? intersection.size / union.size : 0;
+
+      if (similarity > 0.3) {
+        const { strategy, reason } = suggestResolution(
+          { id: idA, type: dataA.page.type },
+          { id: idB, type: dataB.page.type },
+          similarity
+        );
+
+        result.push({
+          pageA: { id: idA, path: dataA.page.path, title: dataA.page.title, type: dataA.page.type },
+          pageB: { id: idB, path: dataB.page.path, title: dataB.page.title, type: dataB.page.type },
+          similarity,
+          suggestion: strategy,
+          reason,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+function suggestResolution(
+  pageA: { id: string; type: string },
+  pageB: { id: string; type: string },
+  similarity: number
+): { strategy: ResolutionStrategy; reason: string } {
+  const sameType = pageA.type === pageB.type;
+
+  if (sameType && similarity > 0.75) {
+    return { strategy: "merge", reason: `Same type with ${(similarity * 100).toFixed(0)}% overlap — likely duplicates` };
+  }
+
+  if (sameType && similarity > 0.4) {
+    return { strategy: "update", reason: `Same type with moderate overlap — add cross-references` };
+  }
+
+  if (similarity > 0.3) {
+    return { strategy: "update", reason: `Different types with overlap — cross-reference recommended` };
+  }
+
+  return { strategy: "update", reason: `Low overlap — add cross-references to clarify distinction` };
 }
