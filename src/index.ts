@@ -40,6 +40,17 @@ import { lintWiki, formatLintResult } from "./operations/lint.js";
 import { mergePages, updatePages, splitPage, suggestResolution } from "./operations/resolve.js";
 import { findContradictionsDetailed } from "./core/staleness.js";
 import {
+  generateProposalId,
+  saveProposal,
+  loadProposal,
+  listProposals,
+  updateProposalStatus,
+  modifyProposal,
+  formatProposal,
+  formatProposalList,
+} from "./operations/proposal.js";
+import type { ProposalAction, Proposal } from "./operations/proposal.js";
+import {
   ingestSource as ingestSourceOp,
   ingestUrl as ingestUrlOp,
 } from "./operations/source.js";
@@ -1229,6 +1240,74 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // PHASE 5: HUMAN-IN-THE-LOOP PROPOSAL TOOLS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─── wiki_proposals ────────────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_proposals",
+    label: "Wiki Proposals",
+    description: "List, approve, or reject pending ingestion proposals. In confirm/guided mode, the wiki generates proposals before making changes.",
+    promptSnippet: "Review and manage wiki proposals",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("list"), Type.Literal("show"), Type.Literal("approve"), Type.Literal("reject")], { description: "Action: list, show, approve, or reject" }),
+      proposalId: Type.Optional(Type.String({ description: "Proposal ID for show/approve/reject" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { action, proposalId } = params as any;
+
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        return { content: [{ type: "text", text: "Wiki not initialized. Run /wiki-init first." }], details: { success: false } };
+      }
+
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+
+      if (action === "list") {
+        const proposals = listProposals(wikiPath, "pending");
+        if (proposals.length === 0) {
+          return { content: [{ type: "text", text: "No pending proposals. Use wiki_ingest in confirm mode to generate proposals." }], details: { success: true, count: 0 } };
+        }
+        return {
+          content: [{ type: "text", text: formatProposalList(proposals) }],
+          details: { success: true, count: proposals.length, proposals },
+        };
+      }
+
+      if (action === "show" || action === "approve" || action === "reject") {
+        if (!proposalId) {
+          return { content: [{ type: "text", text: "\u274c Provide proposalId to show, approve, or reject." }], details: { success: false } };
+        }
+
+        if (action === "show") {
+          const proposal = loadProposal(wikiPath, proposalId);
+          if (!proposal) {
+            return { content: [{ type: "text", text: `Proposal ${proposalId} not found.` }], details: { success: false } };
+          }
+          return { content: [{ type: "text", text: formatProposal(proposal) }], details: { success: true, proposal } };
+        }
+
+        if (action === "approve") {
+          const proposal = updateProposalStatus(wikiPath, proposalId, "approved");
+          if (!proposal) {
+            return { content: [{ type: "text", text: `Proposal ${proposalId} not found.` }], details: { success: false } };
+          }
+          return { content: [{ type: "text", text: `\u2705 Approved proposal ${proposalId}: ${proposal.sourceTitle}` }], details: { success: true, proposal } };
+        }
+
+        if (action === "reject") {
+          const proposal = updateProposalStatus(wikiPath, proposalId, "rejected");
+          if (!proposal) {
+            return { content: [{ type: "text", text: `Proposal ${proposalId} not found.` }], details: { success: false } };
+          }
+          return { content: [{ type: "text", text: `\u274c Rejected proposal ${proposalId}` }], details: { success: true } };
+        }
+      }
+
+      return { content: [{ type: "text", text: `Unknown action: ${action}` }], details: { success: false } };
+    },
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // PHASE 1: SOURCE INGESTION TOOLS
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -1374,6 +1453,40 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
 
+      // Confirm/Guided mode: generate proposal instead of directly ingesting
+      if (state.config.ingestionMode !== "auto") {
+        const proposalId = generateProposalId(type);
+        const pageId = toSlug(title);
+        const pageSlug = pageType || "concept";
+        const dir = getDirectoryForPageType(pageSlug, state.config.pageTypes);
+
+        const proposal: Proposal = {
+          id: proposalId,
+          source: type,
+          sourceTitle: title,
+          createdAt: new Date().toISOString(),
+          status: "pending",
+          actions: [{
+            type: "create",
+            pageId,
+            pageType: pageSlug,
+            title,
+            path: `${dir}/${pageId}.md`,
+            summary: `Source: ${type} — ${title.slice(0, 100)}`,
+            crossRefs: updateExisting || [],
+          }],
+          metadata: { type, title, contentLength: content.length, url },
+        };
+
+        saveProposal(wikiPath, proposal);
+
+        return {
+          content: [{ type: "text", text: `📋 **Proposal created** (confirm/guided mode)\n\n${formatProposal(proposal)}\n\nUse \`wiki_proposals\` to approve or reject this proposal.` }],
+          details: { success: true, proposalId, mode: state.config.ingestionMode },
+        };
+      }
+
+      // Auto mode: ingest directly
       const result = ingestSourceOp(wikiPath, ctx.cwd, type as SourceType, title, content, store, {
         url,
         pageType,

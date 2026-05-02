@@ -1238,4 +1238,79 @@ kapy()
     }
   })
 
+  // ─── proposals ─────────────────────────────────────────────────────────────
+  .command("proposals", {
+    description: "List, approve, or reject pending ingestion proposals",
+    args: [{ name: "action", description: "list, approve, or reject", default: "list" }],
+    flags: {
+      id: {
+        type: "string",
+        alias: "i",
+        description: "Proposal ID to approve or reject",
+      },
+      json: {
+        type: "boolean",
+        alias: "j",
+        description: "Output as JSON",
+      },
+    },
+  }, async (ctx) => {
+    const rootDir = process.cwd();
+    const action = ctx.args.action as string || "list";
+    const proposalId = ctx.args.id as string | undefined;
+
+    if (!wikiExists(rootDir, DEFAULT_CONFIG.wikiDir)) {
+      ctx.error("\u274c Wiki not initialized. Run `wiki init` first.");
+      process.exit(1);
+    }
+
+    const wikiPath = getWikiPath(rootDir, DEFAULT_CONFIG.wikiDir);
+    const { listProposals, loadProposal, updateProposalStatus, formatProposal, formatProposalList } = await import("./operations/proposal.js");
+
+    if (action === "list") {
+      const proposals = listProposals(wikiPath, "pending");
+      ctx.log(formatProposalList(proposals));
+
+      if (ctx.args.json) {
+        console.log(JSON.stringify(proposals));
+      }
+    } else if (action === "approve") {
+      if (!proposalId) {
+        ctx.error("\u274c Specify --id <proposal-id> to approve");
+        process.exit(1);
+      }
+      const proposal = updateProposalStatus(wikiPath, proposalId, "approved");
+      if (!proposal) {
+        ctx.error(`\u274c Proposal ${proposalId} not found`);
+        process.exit(1);
+      }
+      ctx.log(`\u2705 Approved proposal ${proposalId}: ${proposal.sourceTitle}`);
+    } else if (action === "reject") {
+      if (!proposalId) {
+        ctx.error("\u274c Specify --id <proposal-id> to reject");
+        process.exit(1);
+      }
+      const proposal = updateProposalStatus(wikiPath, proposalId, "rejected");
+      if (!proposal) {
+        ctx.error(`\u274c Proposal ${proposalId} not found`);
+        process.exit(1);
+      }
+      ctx.log(`\u274c Rejected proposal ${proposalId}`);
+    } else if (action === "show") {
+      if (!proposalId) {
+        ctx.error("\u274c Specify --id <proposal-id> to show");
+        process.exit(1);
+      }
+      const proposal = loadProposal(wikiPath, proposalId);
+      if (!proposal) {
+        ctx.error(`\u274c Proposal ${proposalId} not found`);
+        process.exit(1);
+      }
+      ctx.log(formatProposal(proposal));
+    } else {
+      ctx.error(`Unknown action: ${action}. Use: list, show, approve, reject`);
+      process.exit(1);
+    }
+  })
+
   .run();
