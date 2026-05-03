@@ -808,3 +808,245 @@ describe("Phase 0: Source manifests and frontmatter integration", () => {
     expect(page!.metadata).toEqual({});
   });
 });
+
+// ============================================================================
+// RUNTIME INTEGRATION TESTS: SCHEMA.MD CONFIG LOADING, PROPOSAL APPLICATION,
+// AND VERSIONING OF MANUAL PAGE WRITES
+// ============================================================================
+import { loadPageTypes, loadDomain, generateSchemaMD } from "../../src/core/config.js";
+import { applyProposal } from "../../src/operations/proposal.js";
+import type { Proposal } from "../../src/operations/proposal.js";
+import { initWikiGit, wikiAutoCommit, getWikiGitLog } from "../../src/core/versioning.js";
+import { DOMAIN_PRESETS } from "../../src/shared.js";
+
+describe("Schema.md Config Loading", () => {
+  let tmpDir: string;
+  let wikiPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-schema-"));
+    wikiPath = path.join(tmpDir, ".codebase-wiki");
+    fs.mkdirSync(path.join(wikiPath, "meta"), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("loadPageTypes parses personal preset from SCHEMA.md", () => {
+    const schema = generateSchemaMD("test", "personal", DOMAIN_PRESETS.personal.pageTypes);
+    const schemaPath = path.join(wikiPath, "SCHEMA.md");
+    fs.writeFileSync(schemaPath, schema, "utf-8");
+
+    const pageTypes = loadPageTypes(schemaPath);
+    expect(pageTypes.length).toBeGreaterThan(0);
+    // Personal preset should have 'person' page type
+    expect(pageTypes.some(pt => pt.id === "person")).toBe(true);
+  });
+
+  test("loadDomain parses personal domain from SCHEMA.md", () => {
+    const schema = generateSchemaMD("test", "personal", DOMAIN_PRESETS.personal.pageTypes);
+    const schemaPath = path.join(wikiPath, "SCHEMA.md");
+    fs.writeFileSync(schemaPath, schema, "utf-8");
+
+    const domain = loadDomain(schemaPath);
+    expect(domain).toBe("personal");
+  });
+
+  test("loadPageTypes falls back to DEFAULT_PAGE_TYPES when SCHEMA.md missing", () => {
+    const schemaPath = path.join(wikiPath, "nonexistent.md");
+    const pageTypes = loadPageTypes(schemaPath);
+    // Should still return the default codebase page types
+    expect(pageTypes.some(pt => pt.id === "entity")).toBe(true);
+  });
+
+  test("loadDomain falls back to codebase when SCHEMA.md missing", () => {
+    const schemaPath = path.join(wikiPath, "nonexistent.md");
+    const domain = loadDomain(schemaPath);
+    expect(domain).toBe("codebase");
+  });
+});
+
+describe("Proposal Application", () => {
+  let tmpDir: string;
+  let wikiPath: string;
+  let store: WikiStore;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-proposal-"));
+    wikiPath = path.join(tmpDir, ".codebase-wiki");
+    fs.mkdirSync(path.join(wikiPath, "meta"), { recursive: true });
+    fs.mkdirSync(path.join(wikiPath, "entities"), { recursive: true });
+    const dbPath = path.join(wikiPath, "meta", "wiki.db");
+    store = new WikiStore(dbPath);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("applyProposal creates pages and marks proposal as applied", () => {
+    const proposal: Proposal = {
+      id: "prop-test-1",
+      source: "article",
+      sourceTitle: "Test Article",
+      createdAt: new Date().toISOString(),
+      status: "approved",
+      actions: [
+        {
+          type: "create",
+          pageId: "test-article",
+          pageType: "concept",
+          title: "Test Article",
+          path: "concepts/test-article.md",
+          summary: "A test article about something",
+          crossRefs: ["related-concept"],
+        },
+      ],
+      metadata: {},
+    };
+
+    const result = applyProposal(wikiPath, store, proposal);
+
+    expect(result.applied).toBe(true);
+    expect(result.pagesCreated).toEqual(["test-article"]);
+    expect(result.errors).toEqual([]);
+
+    // Page should exist in the store
+    const page = store.getPage("test-article");
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe("Test Article");
+
+    // Page file should exist on disk
+    const pagePath = path.join(wikiPath, "concepts", "test-article.md");
+    expect(fs.existsSync(pagePath)).toBe(true);
+    expect(fs.readFileSync(pagePath, "utf-8")).toContain("Test Article");
+  });
+
+  test("applyProposal with update action adds cross-references", () => {
+    // Create an existing page
+    fs.mkdirSync(path.join(wikiPath, "concepts"), { recursive: true });
+    fs.writeFileSync(
+      path.join(wikiPath, "concepts", "existing.md"),
+      "# Existing\n\nSome content\n\n## See Also\n- [[old-ref]]\n",
+      "utf-8"
+    );
+    store.upsertPage({
+      id: "existing",
+      path: "concepts/existing.md",
+      type: "concept",
+      title: "Existing",
+      summary: "An existing page",
+      sourceFiles: [],
+      sourceCommits: [],
+      lastIngested: new Date().toISOString(),
+      lastChecked: new Date().toISOString(),
+      inboundLinks: 0,
+      outboundLinks: 1,
+      stale: false,
+    });
+
+    const proposal: Proposal = {
+      id: "prop-test-2",
+      source: "article",
+      sourceTitle: "Cross-Ref Update",
+      createdAt: new Date().toISOString(),
+      status: "approved",
+      actions: [
+        {
+          type: "update",
+          pageId: "existing",
+          pageType: "concept",
+          title: "Existing",
+          path: "concepts/existing.md",
+          summary: "Update cross-refs",
+          crossRefs: ["new-ref"],
+        },
+      ],
+      metadata: {},
+    };
+
+    const result = applyProposal(wikiPath, store, proposal);
+
+    expect(result.pagesUpdated).toEqual(["existing"]);
+    expect(result.crossReferencesAdded).toBe(1);
+
+    // Verify cross-ref was added to the file
+    const content = fs.readFileSync(path.join(wikiPath, "concepts", "existing.md"), "utf-8");
+    expect(content).toContain("[[new-ref]]");
+  });
+
+  test("applyProposal marks proposal status as applied", () => {
+    const proposalsDir = path.join(wikiPath, "meta", "proposals");
+    fs.mkdirSync(proposalsDir, { recursive: true });
+
+    const proposal: Proposal = {
+      id: "prop-test-3",
+      source: "note",
+      sourceTitle: "Test Note",
+      createdAt: new Date().toISOString(),
+      status: "approved",
+      actions: [
+        {
+          type: "create",
+          pageId: "test-note",
+          pageType: "concept",
+          title: "Test Note",
+          path: "concepts/test-note.md",
+          summary: "A test note",
+        },
+      ],
+      metadata: {},
+    };
+
+    applyProposal(wikiPath, store, proposal);
+
+    // Read back from disk
+    const saved = JSON.parse(fs.readFileSync(path.join(proposalsDir, "prop-test-3.json"), "utf-8"));
+    expect(saved.status).toBe("applied");
+  });
+});
+
+describe("Wiki Versioning on Manual Page Writes", () => {
+  let tmpDir: string;
+  let wikiPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-version-"));
+    wikiPath = path.join(tmpDir, ".codebase-wiki");
+    fs.mkdirSync(path.join(wikiPath, "meta"), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("initWikiGit + wikiAutoCommit tracks manual page writes", () => {
+    initWikiGit(wikiPath);
+
+    const initialLog = getWikiGitLog(wikiPath);
+    expect(initialLog.length).toBeGreaterThanOrEqual(1);
+
+    // Simulate a manual page write
+    fs.mkdirSync(path.join(wikiPath, "entities"), { recursive: true });
+    fs.writeFileSync(path.join(wikiPath, "entities", "test.md"), "# Test\n", "utf-8");
+
+    // Commit it
+    const committed = wikiAutoCommit(wikiPath, "wiki: entity created");
+    expect(committed).toBe(true);
+
+    // Should have new commit in the log
+    const newLog = getWikiGitLog(wikiPath);
+    expect(newLog.length).toBeGreaterThan(initialLog.length);
+    expect(newLog[0]).toContain("entity created");
+  });
+
+  test("wikiAutoCommit does nothing when no changes", () => {
+    initWikiGit(wikiPath);
+
+    const result = wikiAutoCommit(wikiPath, "wiki: nothing");
+    expect(result).toBe(false);
+  });
+});

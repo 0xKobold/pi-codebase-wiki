@@ -21,12 +21,14 @@ import * as fs from "fs";
 import { WikiStore } from "./core/store.js";
 import {
   loadConfig,
+  loadPageTypes,
+  loadDomain,
   wikiExists,
   getWikiPath,
   ensureWikiDirs,
 } from "./core/config.js";
-import type { WikiConfig, GitCommit, LintResult, SourceType } from "./shared.js";
-import { DEFAULT_WIKI_CONFIG, toSlug, formatWikiDate, validateSlug, getDirectoryForPageType } from "./shared.js";
+import type { WikiConfig, GitCommit, LintResult, SourceType, PageTypeConfig } from "./shared.js";
+import { DEFAULT_WIKI_CONFIG, DEFAULT_PAGE_TYPES, toSlug, formatWikiDate, validateSlug, getDirectoryForPageType } from "./shared.js";
 import {
   initWiki,
   ingestCommits,
@@ -39,7 +41,7 @@ import { searchWiki, getPageContent, getRelatedPages } from "./operations/query.
 import { lintWiki, formatLintResult } from "./operations/lint.js";
 import { mergePages, updatePages, splitPage, suggestResolution } from "./operations/resolve.js";
 import { findContradictionsDetailed } from "./core/staleness.js";
-import { getWikiGitHash, getWikiGitLog, initWikiGit, wikiHasChanges } from "./core/versioning.js";
+import { getWikiGitHash, getWikiGitLog, initWikiGit, wikiHasChanges, wikiAutoCommit } from "./core/versioning.js";
 import {
   generateProposalId,
   saveProposal,
@@ -49,6 +51,7 @@ import {
   modifyProposal,
   formatProposal,
   formatProposalList,
+  applyProposal,
 } from "./operations/proposal.js";
 import type { ProposalAction, Proposal } from "./operations/proposal.js";
 import {
@@ -83,6 +86,24 @@ function createState(): ExtensionState {
   };
 }
 
+/**
+ * Load runtime config from SCHEMA.md if wiki exists.
+ * Reads domain and page types from the wiki's SCHEMA.md so that
+ * domain presets (personal, research, book) persist across sessions.
+ */
+function loadConfigFromSchema(rootDir: string, wikiDir: string): { domain: string; pageTypes: PageTypeConfig[] } {
+  const wikiPath = getWikiPath(rootDir, wikiDir);
+  const schemaPath = path.join(wikiPath, "SCHEMA.md");
+
+  if (!fs.existsSync(schemaPath)) {
+    return { domain: "codebase", pageTypes: DEFAULT_PAGE_TYPES };
+  }
+
+  const domain = loadDomain(schemaPath);
+  const pageTypes = loadPageTypes(schemaPath);
+  return { domain, pageTypes };
+}
+
 // ============================================================================
 // MAIN EXTENSION
 // ============================================================================
@@ -93,6 +114,17 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
   // ─── Helper: ensure wiki is initialized ──────────────────────────────
   async function ensureInitialized(ctx: { cwd: string }): Promise<WikiStore | null> {
     state.rootDir = ctx.cwd;
+
+    // Load domain and page types from SCHEMA.md on first initialization
+    if (!state.initialized && wikiExists(state.rootDir, state.config.wikiDir)) {
+      const schemaConfig = loadConfigFromSchema(state.rootDir, state.config.wikiDir);
+      state.config = {
+        ...state.config,
+        domain: schemaConfig.domain,
+        pageTypes: schemaConfig.pageTypes,
+      };
+    }
+
     const wikiPath = getWikiPath(state.rootDir, state.config.wikiDir);
 
     if (!wikiExists(state.rootDir, state.config.wikiDir)) {
@@ -104,9 +136,16 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const store = new WikiStore(dbPath);
       await store.init();
       state.store = store;
+      state.initialized = true;
     }
 
     return state.store;
+  }
+
+  // ─── Helper: update index and auto-commit wiki changes ────────────────
+  function commitWiki(wikiPath: string, store: WikiStore, message: string): void {
+    updateIndex(wikiPath, store);
+    wikiAutoCommit(wikiPath, message);
   }
 
   // ─── Session Start ────────────────────────────────────────────────────
@@ -306,7 +345,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           if (result.errors.length > 0) {
             results.push(`Errors: ${result.errors.join("; ")}`);
           }
-          updateIndex(wikiPath, store);
+          commitWiki(wikiPath, store, "wiki: smart enrich");
         }
 
         // LLM ingest — ask the agent to enrich stub pages with LLM-written content
@@ -444,7 +483,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           for (const m of result.matches.slice(0, 5)) {
             store.addCrossReference(slug, m.page.id, "query match");
           }
-          updateIndex(wikiPath, store);
+          commitWiki(wikiPath, store, "wiki: query filed");
         }
       }
 
@@ -807,7 +846,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         }
       }
 
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: concept created");
 
       const appliesToStr = appliesTo.length > 0 ? "\nApplies to: " + appliesTo.join(", ") : "";
       return {
@@ -1030,7 +1069,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           outboundLinks: 0,
           stale: false,
         });
-        updateIndex(wikiPath, store);
+        commitWiki(wikiPath, store, "wiki: evolution created");
       }
 
       return {
@@ -1144,7 +1183,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
             `✅ Smart enrich: ${result.pagesEnriched} pages enriched, ${result.crossReferencesAdded} cross-references added`,
             "info"
           );
-          updateIndex(wikiPath, store);
+          commitWiki(wikiPath, store, "wiki: smart enrich");
         }
 
         if (source === "llm") {
@@ -1242,7 +1281,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       // Re-run ingest with 0 commits to trigger index rebuild
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: index rebuild");
 
       ctx.ui.notify("✅ Wiki index rebuilt.", "info");
     },
@@ -1267,6 +1306,11 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
         return { content: [{ type: "text", text: "Wiki not initialized. Run /wiki-init first." }], details: { success: false } };
+      }
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "Failed to initialize wiki store." }], details: { success: false } };
       }
 
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
@@ -1296,11 +1340,33 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         }
 
         if (action === "approve") {
-          const proposal = updateProposalStatus(wikiPath, proposalId, "approved");
+          let proposal = updateProposalStatus(wikiPath, proposalId, "approved");
           if (!proposal) {
             return { content: [{ type: "text", text: `Proposal ${proposalId} not found.` }], details: { success: false } };
           }
-          return { content: [{ type: "text", text: `\u2705 Approved proposal ${proposalId}: ${proposal.sourceTitle}` }], details: { success: true, proposal } };
+
+          // Apply the proposal's actions (create pages, add cross-references)
+          const applyResult = applyProposal(wikiPath, store, proposal);
+          wikiAutoCommit(wikiPath, `wiki: apply proposal ${proposalId}`);
+
+          const lines = [
+            `\u2705 **Applied proposal ${proposalId}**: ${proposal.sourceTitle}`,
+            "",
+          ];
+          if (applyResult.pagesCreated.length > 0) {
+            lines.push(`Pages created: ${applyResult.pagesCreated.join(", ")}`);
+          }
+          if (applyResult.pagesUpdated.length > 0) {
+            lines.push(`Pages updated: ${applyResult.pagesUpdated.join(", ")}`);
+          }
+          if (applyResult.crossReferencesAdded > 0) {
+            lines.push(`Cross-references added: ${applyResult.crossReferencesAdded}`);
+          }
+          if (applyResult.errors.length > 0) {
+            lines.push("", `\u26a0\ufe0f Errors: ${applyResult.errors.join("; ")}`);
+          }
+
+          return { content: [{ type: "text", text: lines.join("\n") }], details: { success: applyResult.errors.length === 0, ...applyResult } };
         }
 
         if (action === "reject") {
@@ -1376,7 +1442,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       const result = mergePages(wikiPath, store, pageA, pageB);
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: merge contradiction");
 
       return {
         content: [{ type: "text", text: `✅ Merged [[${pageA}]] into [[${pageB}]] — ${result.redirected.length} references redirected.` }],
@@ -1391,7 +1457,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       const result = updatePages(wikiPath, store, pageA, pageB);
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: cross-reference update");
 
       return {
         content: [{ type: "text", text: `✅ Added cross-references between [[${pageA}]] and [[${pageB}]] — ${result.updated.length} pages updated.` }],
@@ -1407,7 +1473,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
       const title = newPageTitle || newPageId;
       const result = splitPage(wikiPath, store, pageA, newPageId, title, () => false);
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: split page");
 
       return {
         content: [{ type: "text", text: `✅ Split [[${pageA}]] — created [[${result.newPage}]]. Review both pages and adjust sections as needed.` }],
@@ -1510,7 +1576,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       // Update the index after creating pages
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: ingest source");
 
       return {
         content: [{ type: "text", text: `✅ Source ingested:\n\n**Manifest**: \`${result.manifestId}\`\n**Type**: ${type}\n**Title**: ${title}\n**Pages created**: ${result.pagesCreated.join(", ") || "none"}\n**Pages updated**: ${result.pagesUpdated.join(", ") || "none"}\n**Source path**: ${result.sourcePath}` }],
@@ -1562,7 +1628,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         };
       }
 
-      updateIndex(wikiPath, store);
+      commitWiki(wikiPath, store, "wiki: ingest url");
 
       return {
         content: [{ type: "text", text: `✅ URL ingested:\n\n**Manifest**: \`${result.manifestId}\`\n**Title**: ${result.title}\n**Content length**: ${result.contentLength} chars\n**Pages created**: ${result.pagesCreated.join(", ") || "none"}\n**Pages updated**: ${result.pagesUpdated.join(", ") || "none"}` }],

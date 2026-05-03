@@ -56,7 +56,6 @@ export interface ProposalResult {
   crossReferencesAdded: number;
   errors: string[];
 }
-
 // ============================================================================
 // PROPOSAL GENERATION
 // ============================================================================
@@ -160,6 +159,104 @@ export function modifyProposal(
 
   saveProposal(wikiPath, proposal);
   return proposal;
+}
+
+// ============================================================================
+// PROPOSAL APPLICATION
+// ============================================================================
+
+/**
+ * Apply an approved proposal — execute all its actions against the wiki.
+ * Creates pages, updates cross-references, and marks the proposal as "applied".
+ */
+export function applyProposal(
+  wikiPath: string,
+  store: WikiStore,
+  proposal: Proposal
+): ProposalResult {
+  const result: ProposalResult = {
+    proposalId: proposal.id,
+    applied: false,
+    pagesCreated: [],
+    pagesUpdated: [],
+    crossReferencesAdded: 0,
+    errors: [],
+  };
+
+  for (const action of proposal.actions) {
+    try {
+      const pagePath = path.join(wikiPath, action.path);
+
+      if (action.type === "create") {
+        // Check if page already exists
+        if (store.getPage(action.pageId)) {
+          // Page exists — treat as update instead
+          result.pagesUpdated.push(action.pageId);
+        } else {
+          // Create new page file
+          const dir = path.dirname(pagePath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+
+          const content = `# ${action.title}\n\n> **Summary**: ${action.summary}\n\n## See Also\n` +
+            (action.crossRefs?.map(ref => `- [[${ref}]]`).join("\n") ?? "- (none yet)");
+
+          fs.writeFileSync(pagePath, content, "utf-8");
+
+          store.upsertPage({
+            id: action.pageId,
+            path: action.path,
+            type: action.pageType,
+            title: action.title,
+            summary: action.summary,
+            sourceFiles: [],
+            sourceCommits: [],
+            lastIngested: new Date().toISOString(),
+            lastChecked: new Date().toISOString(),
+            inboundLinks: 0,
+            outboundLinks: action.crossRefs?.length ?? 0,
+            stale: false,
+          });
+
+          result.pagesCreated.push(action.pageId);
+        }
+      } else if (action.type === "update") {
+        // Update existing page — add cross-references
+        const existing = store.getPage(action.pageId);
+        if (existing) {
+          if (action.crossRefs && action.crossRefs.length > 0) {
+            // Add new cross-references to the page file
+            if (fs.existsSync(pagePath)) {
+              let content = fs.readFileSync(pagePath, "utf-8");
+              const seeAlsoSection = "## See Also";
+              if (content.includes(seeAlsoSection)) {
+                for (const ref of action.crossRefs) {
+                  if (!content.includes(`[[${ref}]]`)) {
+                    content = content.replace(seeAlsoSection, `${seeAlsoSection}\n- [[${ref}]]`);
+                    result.crossReferencesAdded++;
+                  }
+                }
+                fs.writeFileSync(pagePath, content, "utf-8");
+              }
+            }
+          }
+          result.pagesUpdated.push(action.pageId);
+        } else {
+          result.errors.push(`Page ${action.pageId} not found for update`);
+        }
+      }
+    } catch (err) {
+      result.errors.push(`Failed to apply action ${action.type} for ${action.pageId}: ${err}`);
+    }
+  }
+
+  // Mark proposal as applied
+  proposal.status = "applied";
+  saveProposal(wikiPath, proposal);
+
+  result.applied = result.errors.length === 0;
+  return result;
 }
 
 // ============================================================================
