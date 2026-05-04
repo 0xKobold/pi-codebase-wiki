@@ -44,7 +44,7 @@ import {
   getLatestHash,
 } from "./core/index.js";
 import { toSlug, validateSlug, formatWikiDate, getDirectoryForPageType, DOMAIN_PRESETS, DEFAULT_PAGE_TYPES } from "./shared.js";
-import type { PageType } from "./shared.js";
+import type { PageType, IngestionMode } from "./shared.js";
 import type { WikiConfig, GitCommit } from "./shared.js";
 import { mergePages, updatePages, splitPage, suggestResolution } from "./operations/resolve.js";
 import { findContradictionsDetailed } from "./core/staleness.js";
@@ -96,16 +96,26 @@ kapy()
         alias: "D",
         description: "Wiki domain preset: codebase (default), personal, research, book",
       },
+      mode: {
+        type: "string",
+        description: "Ingestion mode: auto (default), confirm, guided",
+      },
     },
   }, async (ctx) => {
     const rootDir = process.cwd();
     const wikiDir = (ctx.args.dir as string) || ".codebase-wiki";
     const domain = (ctx.args.domain as string) || "codebase";
+    const mode = (ctx.args.mode as string) || "auto";
 
     // Resolve domain preset
     const preset = DOMAIN_PRESETS[domain];
     if (domain !== "codebase" && !preset) {
       ctx.error(`Unknown domain preset: ${domain}. Available: ${Object.keys(DOMAIN_PRESETS).join(", ")}`);
+      process.exit(1);
+    }
+
+    if (!["auto", "confirm", "guided"].includes(mode)) {
+      ctx.error(`Unknown mode: ${mode}. Available: auto, confirm, guided`);
       process.exit(1);
     }
 
@@ -118,7 +128,7 @@ kapy()
     }
 
     const pageTypes = preset?.pageTypes ?? DEFAULT_PAGE_TYPES;
-    const config = { ...DEFAULT_CONFIG, wikiDir, domain, pageTypes };
+    const config = { ...DEFAULT_CONFIG, wikiDir, domain, pageTypes, ingestionMode: mode as IngestionMode };
     const wikiPath = ensureWikiDirs(rootDir, wikiDir, pageTypes);
     const dbPath = path.join(wikiPath, "meta", "wiki.db");
     const store = new WikiStore(dbPath);
@@ -129,6 +139,7 @@ kapy()
 
     ctx.log(`📖 ${preset?.name ?? "Codebase"} wiki initialized at ${wikiDir}`);
     ctx.log(`Domain: ${domain} — ${pageTypes.length} page types configured`);
+    ctx.log(`Mode: ${mode}`);
     ctx.log(`Run \`wiki ingest all\` to populate it.`);
 
     if (ctx.args.json) {

@@ -10,6 +10,7 @@ import * as path from "path";
 import type { GitCommit } from "../shared.js";
 import { toSlug, formatWikiDate, getDirectoryForPageType, DEFAULT_PAGE_TYPES } from "../shared.js";
 import type { PageTypeConfig } from "../shared.js";
+import { hasFrontmatter, serializeFrontmatter } from "../core/frontmatter.js";
 import type { WikiStore } from "../core/store.js";
 import type { ModuleInfo } from "../core/indexer.js";
 import { initWikiGit, wikiAutoCommit } from "../core/versioning.js";
@@ -40,9 +41,32 @@ import {
 import { getTemplatesForPageTypes } from "../core/templates.js";
 
 // ============================================================================
-// INGEST OPERATIONS
+// FRONTMATTER INJECTION
 // ============================================================================
 
+/**
+ * Ensure page content has YAML frontmatter with metadata from the WikiPage.
+ * If frontmatter already exists, it's preserved as-is.
+ * If missing, injects a minimal frontmatter with type, slug, last_updated, and source IDs.
+ */
+function ensureFrontmatter(content: string, page: { id: string; type: string; sourceIds?: string[]; lastIngested?: string }): string {
+  if (hasFrontmatter(content)) return content;
+
+  const metadata: Record<string, any> = {
+    id: page.id,
+    type: page.type,
+    last_updated: page.lastIngested ?? formatWikiDate(new Date()),
+  };
+  if (page.sourceIds && page.sourceIds.length > 0) {
+    metadata.sources = page.sourceIds;
+  }
+
+  return serializeFrontmatter(metadata, content);
+}
+
+// ============================================================================
+// INGEST OPERATIONS
+// =============================================================================
 export interface IngestResult {
   pagesCreated: number;
   pagesUpdated: number;
@@ -74,9 +98,9 @@ export function initWiki(
   const pkg = readPackageJson(rootDir);
   const projectName = (pkg?.name as string) || path.basename(rootDir);
 
-  // Create SCHEMA.md — includes domain and page type config
+  // Create SCHEMA.md — includes domain, page types, and ingestion workflow
   if (!fs.existsSync(schemaPath)) {
-    fs.writeFileSync(schemaPath, generateSchemaMD(projectName, domain, pageTypes), "utf-8");
+    fs.writeFileSync(schemaPath, generateSchemaMD(projectName, domain, pageTypes, config.ingestionMode, config.ingestionThresholds), "utf-8");
   }
 
   // Create INDEX.md
@@ -317,7 +341,8 @@ export async function ingestFileTree(
     const content = `# README Summary\n\n> **Summary**: Project README documentation.\n\n${readme.slice(0, 2000)}${readme.length > 2000 ? "\n\n... (truncated)" : ""}\n\n## See Also\n- [[index]]\n`;
 
     fs.mkdirSync(conceptDir, { recursive: true });
-    fs.writeFileSync(readmePath, content, "utf-8");
+    const readmeWithFrontmatter = ensureFrontmatter(content, { id: "readme", type: "concept" });
+    fs.writeFileSync(readmePath, readmeWithFrontmatter, "utf-8");
     result.pagesCreated++;
   }
 
@@ -384,7 +409,8 @@ ${recentCommits ? `### Recent Changes\n${recentCommits}` : "- (no commits tracke
 `;
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, "utf-8");
+  const enrichedContent = ensureFrontmatter(content, { id: slug, type: "entity" });
+  fs.writeFileSync(filePath, enrichedContent, "utf-8");
 
   store.upsertPage({
     id: slug,
@@ -484,7 +510,8 @@ function updateEntityPage(
     );
   }
 
-  fs.writeFileSync(filePath, content, "utf-8");
+  const enrichedContent = ensureFrontmatter(content, { id: slug, type: "entity", sourceIds: existing.sourceIds, lastIngested: existing.lastIngested });
+  fs.writeFileSync(filePath, enrichedContent, "utf-8");
 
   // Update store — merge source data, don't replace
   existing.sourceCommits = [...new Set([...existing.sourceCommits, ...newCommits.map(c => c.hash)])];

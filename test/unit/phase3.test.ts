@@ -23,6 +23,7 @@ import {
   generateIndexMD,
   loadPageTypes,
   loadDomain,
+  loadIngestionConfig,
 } from "../../src/core/config.js";
 import {
   getTemplateForPageType,
@@ -298,5 +299,52 @@ describe("getDirectoryForPageType works with domain presets", () => {
 
   test("unknown type falls back to type + 's'", () => {
     expect(getDirectoryForPageType("whatever")).toBe("whatevers");
+  });
+});
+
+describe("loadIngestionConfig parses SCHEMA.md ingestion mode", () => {
+  let tmpDir: string;
+  let schemaPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wiki-schema-ingest-"));
+    schemaPath = path.join(tmpDir, "SCHEMA.md");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("defaults to auto mode when no ingestion config", () => {
+    fs.writeFileSync(schemaPath, generateSchemaMD("test", "codebase"));
+    const config = loadIngestionConfig(schemaPath);
+    expect(config.mode).toBe("auto");
+    expect(config.thresholds.newPageCreation).toBe(false);
+  });
+
+  test("parses confirm mode from SCHEMA.md", () => {
+    const schema = generateSchemaMD("test", "codebase", undefined, "confirm" as any);
+    fs.writeFileSync(schemaPath, schema);
+    const config = loadIngestionConfig(schemaPath);
+    expect(config.mode).toBe("confirm");
+  });
+
+  test("parses guided mode from SCHEMA.md", () => {
+    const schema = generateSchemaMD("test", "codebase", undefined, "guided" as any);
+    fs.writeFileSync(schemaPath, schema);
+    const config = loadIngestionConfig(schemaPath);
+    expect(config.mode).toBe("guided");
+  });
+
+  test("falls back to auto for missing schema file", () => {
+    const config = loadIngestionConfig("/nonexistent/path/SCHEMA.md");
+    expect(config.mode).toBe("auto");
+  });
+
+  test("falls back to auto for invalid mode", () => {
+    const schema = "# Test Wiki Schema\n\n**Domain**: codebase\n\n**Ingestion Mode**: invalid\n";
+    fs.writeFileSync(schemaPath, schema);
+    const config = loadIngestionConfig(schemaPath);
+    expect(config.mode).toBe("auto");
   });
 });

@@ -23,11 +23,12 @@ import {
   loadConfig,
   loadPageTypes,
   loadDomain,
+  loadIngestionConfig,
   wikiExists,
   getWikiPath,
   ensureWikiDirs,
 } from "./core/config.js";
-import type { WikiConfig, GitCommit, LintResult, SourceType, PageTypeConfig } from "./shared.js";
+import type { WikiConfig, GitCommit, LintResult, SourceType, PageTypeConfig, IngestionMode, IngestionThresholds } from "./shared.js";
 import { DEFAULT_WIKI_CONFIG, DEFAULT_PAGE_TYPES, toSlug, formatWikiDate, validateSlug, getDirectoryForPageType } from "./shared.js";
 import {
   initWiki,
@@ -91,17 +92,18 @@ function createState(): ExtensionState {
  * Reads domain and page types from the wiki's SCHEMA.md so that
  * domain presets (personal, research, book) persist across sessions.
  */
-function loadConfigFromSchema(rootDir: string, wikiDir: string): { domain: string; pageTypes: PageTypeConfig[] } {
+function loadConfigFromSchema(rootDir: string, wikiDir: string): { domain: string; pageTypes: PageTypeConfig[]; ingestionMode: IngestionMode; ingestionThresholds: IngestionThresholds } {
   const wikiPath = getWikiPath(rootDir, wikiDir);
   const schemaPath = path.join(wikiPath, "SCHEMA.md");
 
   if (!fs.existsSync(schemaPath)) {
-    return { domain: "codebase", pageTypes: DEFAULT_PAGE_TYPES };
+    return { domain: "codebase", pageTypes: DEFAULT_PAGE_TYPES, ingestionMode: "auto", ingestionThresholds: DEFAULT_WIKI_CONFIG.ingestionThresholds };
   }
 
   const domain = loadDomain(schemaPath);
   const pageTypes = loadPageTypes(schemaPath);
-  return { domain, pageTypes };
+  const { mode: ingestionMode, thresholds: ingestionThresholds } = loadIngestionConfig(schemaPath);
+  return { domain, pageTypes, ingestionMode, ingestionThresholds };
 }
 
 // ============================================================================
@@ -115,13 +117,15 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
   async function ensureInitialized(ctx: { cwd: string }): Promise<WikiStore | null> {
     state.rootDir = ctx.cwd;
 
-    // Load domain and page types from SCHEMA.md on first initialization
+    // Load full config from SCHEMA.md on first initialization
     if (!state.initialized && wikiExists(state.rootDir, state.config.wikiDir)) {
       const schemaConfig = loadConfigFromSchema(state.rootDir, state.config.wikiDir);
       state.config = {
         ...state.config,
         domain: schemaConfig.domain,
         pageTypes: schemaConfig.pageTypes,
+        ingestionMode: schemaConfig.ingestionMode,
+        ingestionThresholds: schemaConfig.ingestionThresholds,
       };
     }
 

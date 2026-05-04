@@ -23,6 +23,7 @@ export {
   generateComparisonTemplate,
   loadPageTypes,
   loadDomain,
+  loadIngestionConfig,
 } from "./config.js";
 
 export { getTemplateForPageType, getTemplatesForPageTypes } from "./templates.js";

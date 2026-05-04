@@ -7,7 +7,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import type { WikiConfig, IngestConfig, PageTypeConfig, SourceType } from "../shared.js";
+import type { WikiConfig, IngestConfig, PageTypeConfig, SourceType, IngestionMode, IngestionThresholds } from "../shared.js";
 import { DEFAULT_WIKI_DIR, DEFAULT_WIKI_CONFIG, DEFAULT_INGEST_CONFIG, DEFAULT_PAGE_TYPES, getDirectoryForPageType } from "../shared.js";
 
 // ============================================================================
@@ -107,6 +107,49 @@ export function loadDomain(schemaPath: string): string {
   }
 }
 
+/**
+ * Parse ingestion mode and thresholds from SCHEMA.md.
+ * Falls back to defaults ("auto" mode, no confirmations) if not found.
+ */
+export function loadIngestionConfig(schemaPath: string): { mode: IngestionMode; thresholds: IngestionThresholds } {
+  console.assert(typeof schemaPath === "string", "schemaPath must be string");
+
+  const defaults = {
+    mode: "auto" as IngestionMode,
+    thresholds: DEFAULT_WIKI_CONFIG.ingestionThresholds,
+  };
+
+  try {
+    const content = fs.readFileSync(schemaPath, "utf-8");
+
+    // Parse ingestion mode
+    const modeMatch = content.match(/\*\*Ingestion Mode\*\*:\s*(\w+)/);
+    const mode = (modeMatch?.[1] as IngestionMode) ?? defaults.mode;
+    if (!["auto", "confirm", "guided"].includes(mode)) {
+      return defaults;
+    }
+
+    // Parse thresholds section
+    const thresholds: IngestionThresholds = { ...defaults.thresholds };
+    const thresholdSection = content.match(/## Ingestion Workflow[\s\S]*?(?=\n##|\n---|$)/);
+    if (thresholdSection?.[1]) {
+      const section = thresholdSection[1];
+      const parseBool = (key: string, fallback: boolean): boolean => {
+        const m = section.match(new RegExp(`${key}:\\s*(true|false)`, "i"));
+        return m ? m[1]!.toLowerCase() === "true" : fallback;
+      };
+      thresholds.newPageCreation = parseBool("new_page_creation", thresholds.newPageCreation);
+      thresholds.pageDeletion = parseBool("page_deletion", thresholds.pageDeletion);
+      thresholds.contradictionResolution = parseBool("contradiction_resolution", thresholds.contradictionResolution);
+      thresholds.crossReferenceUpdate = parseBool("cross_reference_update", thresholds.crossReferenceUpdate);
+    }
+
+    return { mode, thresholds };
+  } catch {
+    return defaults;
+  }
+}
+
 // ============================================================================
 // WIKI DIRECTORY MANAGEMENT
 // ============================================================================
@@ -179,7 +222,7 @@ export function ensureWikiDirs(rootDir: string, wikiDir: string = DEFAULT_WIKI_D
  * The SCHEMA.md is the "constitution" for the wiki — the LLM reads it
  * on every operation to understand constraints and page types.
  */
-export function generateSchemaMD(projectName: string, domain: string = "codebase", pageTypes?: PageTypeConfig[]): string {
+export function generateSchemaMD(projectName: string, domain: string = "codebase", pageTypes?: PageTypeConfig[], ingestionMode: IngestionMode = "auto", ingestionThresholds?: IngestionThresholds): string {
   const types = pageTypes ?? DEFAULT_PAGE_TYPES;
   const typesWithDirs = types.filter(pt => pt.directory);
 
@@ -221,6 +264,17 @@ ${pageTypeRows}
 ## Page Types Config
 
 ${pageTypeConfigs}
+
+**Ingestion Mode**: ${ingestionMode}
+
+## Ingestion Workflow
+
+\`\`\`
+new_page_creation: ${ingestionThresholds?.newPageCreation ?? false}
+page_deletion: ${ingestionThresholds?.pageDeletion ?? true}
+contradiction_resolution: ${ingestionThresholds?.contradictionResolution ?? true}
+cross_reference_update: ${ingestionThresholds?.crossReferenceUpdate ?? false}
+\`\`\`
 
 ## Operations
 
