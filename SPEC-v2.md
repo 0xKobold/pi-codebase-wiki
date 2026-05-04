@@ -534,15 +534,15 @@ The critical gap — making sources a first-class concept.
 
 **Goal:** Any type of source can be ingested, not just git commits.
 
-- [ ] Add `SourceManifest` type and storage in WikiStore
-- [ ] Create `.codebase-wiki/sources/` directory structure: `{type}/{uuid}.{ext}`
-- [ ] Implement `wiki_ingest_source` tool/command for arbitrary content
-- [ ] Implement `wiki_ingest_url` tool/command for web articles
-- [ ] Update `wiki_ingest` to create source manifests for commit ingests
-- [ ] Add YAML frontmatter to all wiki pages (backward-compatible: detect and add)
-- [ ] Update `updateIndex()` to include source references
-- [ ] Add `wiki sources` command to list ingested sources
-- [ ] Update SCHEMA.md template to include source types section
+- [x] Add `SourceManifest` type and storage in WikiStore
+- [x] Create `.codebase-wiki/sources/` directory structure: `{type}/{uuid}.{ext}`
+- [x] Implement `wiki_ingest_source` tool/command for arbitrary content
+- [x] Implement `wiki_ingest_url` tool/command for web articles
+- [x] Update `wiki_ingest` to create source manifests for commit ingests
+- [x] Add YAML frontmatter to all wiki pages (backward-compatible: detect and add)
+- [x] Update `updateIndex()` to include source references
+- [x] Add `wiki sources` command to list ingested sources
+- [x] Update SCHEMA.md template to include source types section
 
 **Files changed:**
 - `src/shared.ts` — Add `SourceManifest`, `SourceType`, `PageTypeConfig` types
@@ -557,12 +557,12 @@ The critical gap — making sources a first-class concept.
 
 **Goal:** Initialize different wiki types for different use cases.
 
-- [ ] Define domain presets (codebase, personal, research, book, business)
-- [ ] Each preset configures page types, templates, SCHEMA.md, and default queries
-- [ ] Create template sets for each domain (e.g., `person.md`, `topic.md`, `chapter.md`)
-- [ ] Make `PageType` dynamic — read from SCHEMA.md config, not hardcoded union
-- [ ] Update `PAGE_TYPE_DIR` to be derived from config
-- [ ] Update `wiki_init` to accept `--domain` flag
+- [x] Define domain presets (codebase, personal, research, book, business)
+- [x] Each preset configures page types, templates, SCHEMA.md, and default queries
+- [x] Create template sets for each domain (e.g., `person.md`, `topic.md`, `chapter.md`)
+- [x] Make `PageType` dynamic — read from SCHEMA.md config, not hardcoded union
+- [x] Update `PAGE_TYPE_DIR` to be derived from config
+- [x] Update `wiki_init` to accept `--domain` flag
 - [ ] Update web UI to show page type icons from config
 
 **Files changed:**
@@ -575,13 +575,13 @@ The critical gap — making sources a first-class concept.
 
 **Goal:** Let users review and approve changes before they're written.
 
-- [ ] Add `ingestion.mode` config (auto/confirm/guided)
-- [ ] Add `confirm_thresholds` config
-- [ ] Implement confirm mode: generate proposal, send to agent, wait for approval
-- [ ] Update `wiki_ingest` to respect mode
-- [ ] Update `wiki_ingest_source` to respect mode
-- [ ] Add proposal generation (list pages to create, update, cross-ref changes)
-- [ ] Store proposals in `.codebase-wiki/meta/proposals/` for review
+- [x] Add `ingestion.mode` config (auto/confirm/guided)
+- [x] Add `confirm_thresholds` config
+- [x] Implement confirm mode: generate proposal, send to agent, wait for approval
+- [x] Update `wiki_ingest` to respect mode
+- [x] Update `wiki_ingest_source` to respect mode
+- [x] Add proposal generation (list pages to create, update, cross-ref changes)
+- [x] Store proposals in `.codebase-wiki/meta/proposals/` for review
 
 **Files changed:**
 - `src/core/config.ts` — Parse ingestion config from SCHEMA.md
@@ -593,13 +593,13 @@ The critical gap — making sources a first-class concept.
 
 **Goal:** Don't just detect contradictions — resolve them.
 
-- [ ] Enhance `findContradictions` with merge/update/split suggestions
-- [ ] Add `wiki_resolve` tool for resolving contradictions
-- [ ] Implement merge logic: combine two pages, redirect old to new
-- [ ] Implement update logic: keep both pages but add explicit cross-references
-- [ ] Implement split logic: one page → two pages
-- [ ] Add contradiction resolution to LOG.md
-- [ ] Update lint to suggest resolution strategies
+- [x] Enhance `findContradictions` with merge/update/split suggestions
+- [x] Add `wiki_resolve` tool for resolving contradictions
+- [x] Implement merge logic: combine two pages, redirect old to new
+- [x] Implement update logic: keep both pages but add explicit cross-references
+- [x] Implement split logic: one page → two pages
+- [x] Add contradiction resolution to LOG.md
+- [x] Update lint to suggest resolution strategies
 
 **Files changed:**
 - `src/core/staleness.ts` — Enhanced contradiction detection
@@ -611,12 +611,12 @@ The critical gap — making sources a first-class concept.
 
 **Goal:** Queries compound into the wiki. LOG.md becomes a first-class timeline.
 
-- [ ] Enhance `wiki_query` to file richer answer pages
-- [ ] Generate structured LOG.md with `## [timestamp] type | title` prefixes
-- [ ] Add LOG.md querying capabilities
-- [ ] Add source attribution to every claim in wiki pages
+- [x] Enhance `wiki_query` to file richer answer pages
+- [x] Generate structured LOG.md with `## [timestamp] type | title` prefixes
+- [x] Add LOG.md querying capabilities
+- [x] Add source attribution to every claim in wiki pages
 - [ ] Update web UI to show LOG.md timeline view
-- [ ] Make LOG.md grep-friendly (consistent prefixes)
+- [x] Make LOG.md grep-friendly (consistent prefixes)
 
 **Files changed:**
 - `src/operations/query.ts` — Enhanced answer page generation
@@ -632,11 +632,11 @@ These are stretch goals that make the wiki truly general-purpose.
 - [ ] **Output format flexibility** — Generate Marp slide decks from wiki content
 - [ ] **Dataview compatibility** — YAML frontmatter that Obsidian Dataview can query
 - [ ] **Incremental page updates** — When ingesting a source that contradicts existing pages, update those pages (not just flag them)
-- [ ] **Source deduplication** — Detect when the same article has been ingested twice
+- [x] **Source deduplication** — Detect when the same article has been ingested twice
 - [ ] **Batch ingestion** — Ingest multiple sources at once with progress tracking
 - [ ] **Wiki export** — Export entire wiki as static HTML site or PDF
 - [ ] **Search upgrade** — Replace keyword search with BM25 + vector hybrid (optional, for large wikis)
-- [ ] **Git-based versioning** — Initialize wiki as a git repo for full history and branching
+- [x] **Git-based versioning** — Initialize wiki as a git repo for full history and branching
 
 ---
 
