@@ -1388,7 +1388,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       proposalId: Type.Optional(Type.String({ description: "Proposal ID for show/approve/reject" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { action, proposalId } = params as any;
+      const { action, proposalId } = params as { action: string; proposalId?: string };
 
       if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
         return { content: [{ type: "text", text: "Wiki not initialized. Run /wiki-init first." }], details: { success: false } };
