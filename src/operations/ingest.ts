@@ -3,6 +3,9 @@
  *
  * The core Karpathy Wiki operation: read source → extract → update wiki pages.
  * Uses file system for wiki content, SQLite for metadata.
+ *
+ * On init, also generates AGENTS.md with wiki management instructions
+ * so the coding agent knows how to maintain the wiki.
  */
 
 import * as fs from "fs";
@@ -73,6 +76,78 @@ export interface IngestResult {
   commitsProcessed: number;
   filesProcessed: number;
   errors: string[];
+}
+
+/**
+ * Generate AGENTS.md content with wiki management instructions.
+ * Merges into an existing AGENTS.md rather than overwriting —
+ * only adds the wiki section if it's missing.
+ */
+function generateAgentsWikiSection(wikiDir: string): string {
+  return [
+    "## Codebase Wiki",
+    "",
+    `This project has an auto-maintained knowledge base at \`${wikiDir}/\`.`,
+    "",
+    "### Keeping the Wiki Updated",
+    "",
+    "- **After making code changes**, run `wiki_ingest` with source `commits` or `smart` to update affected pages.",
+    "- **After refactoring or adding modules**, run `wiki_ingest` with source `tree` to sync the file tree.",
+    "- **Periodically run `wiki_lint`** to catch contradictions, orphans, and stale pages.",
+    "- **When you create an ADR or major design decision**, use `wiki_decision` to record it.",
+    "- **When you add a cross-cutting pattern**, use `wiki_concept` to document it.",
+    "- **When you need context**, use `wiki_query` instead of grepping source files.",
+    "",
+    "### Wiki Page Types",
+    "",
+    "| Type | Directory | Purpose |",
+    "|------|-----------|---------|",
+    "| entity | `entities/` | Code modules, services, and components |",
+    "| concept | `concepts/` | Cross-cutting patterns and architectural themes |",
+    "| decision | `decisions/` | Architecture Decision Records (ADRs) |",
+    "| evolution | `evolution/` | Feature change history traced from git |",
+    "| query | `queries/` | Filed search queries for cross-referencing |",
+    "",
+    "### Workflow",
+    "",
+    "1. **Initialize**: `/wiki-init` creates `" + wikiDir + "/` with SCHEMA.md, templates, and INDEX.md.",
+    "2. **Populate**: `wiki_ingest` with `tree` (initial), `commits` (incremental), `smart` (enrich), or `llm` (agent-written).",
+    "3. **Query**: `wiki_query` searches pages and files good queries back as new wiki pages.",
+    "4. **Lint**: `wiki_lint` checks for contradictions, orphans, stale pages, broken links.",
+    "5. **Evolve**: `wiki_evolve` traces how a feature changed over time from git history.",
+    "",
+    "Pages are tracked in SQLite (`" + wikiDir + "/meta/wiki.db`) and versioned in git.",
+    "Edit pages by hand or via tools — the wiki respects hand-edited content and won't overwrite it with stubs.",
+  ].join("\n");
+}
+
+/**
+ * Write or merge wiki management instructions into AGENTS.md.
+ * Only adds the section if it doesn't already exist.
+ */
+function writeAgentsWikiSection(rootDir: string, wikiDir: string): void {
+  const agentsPath = path.join(rootDir, "AGENTS.md");
+  const wikiSection = generateAgentsWikiSection(wikiDir);
+  const sectionMarker = "## Codebase Wiki";
+
+  try {
+    if (fs.existsSync(agentsPath)) {
+      let content = fs.readFileSync(agentsPath, "utf-8");
+      // Only add if the section doesn't already exist
+      if (!content.includes(sectionMarker)) {
+        // Append the wiki section at the end
+        content = content.trimEnd() + "\n\n" + wikiSection + "\n";
+        fs.writeFileSync(agentsPath, content, "utf-8");
+      }
+      // If section already exists, leave it as-is (user may have customized it)
+    } else {
+      // No AGENTS.md yet — create one with just the wiki section
+      const newContent = "# AGENTS.md\n\n" + wikiSection + "\n";
+      fs.writeFileSync(agentsPath, newContent, "utf-8");
+    }
+  } catch {
+    // Can't write AGENTS.md — not fatal, just skip
+  }
 }
 
 /**
@@ -157,6 +232,9 @@ export function initWiki(
   } catch {
     // Can't write .gitignore — not fatal, just skip
   }
+
+  // Write wiki management instructions into AGENTS.md
+  writeAgentsWikiSection(rootDir, config.wikiDir);
 
   // Initialize wiki git repo for versioning
   initWikiGit(wikiPath);

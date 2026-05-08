@@ -12,6 +12,9 @@ import type { GitCommit } from "../shared.js";
 import { parseCommitMessage, isIngestibleCommit } from "../shared.js";
 import type { IngestConfig } from "../shared.js";
 
+// Default timeout for git commands (30 seconds)
+const GIT_TIMEOUT_MS = 30_000;
+
 // Null byte delimiter for robust git log parsing
 const COMMIT_DELIM = "\x00";
 const FIELD_DELIM = "\x01";
@@ -32,7 +35,8 @@ export function getRecentCommits(cwd: string, since: string = "1 week ago"): Git
     // Use null-delimited format: hash\x01author\x01date\x01subject\x01body\x00files-list
     const logOutput = execSync(
       `git log --format="%H${FIELD_DELIM}%an${FIELD_DELIM}%aI${FIELD_DELIM}%s${FIELD_DELIM}%b" --name-only --since="${since}" -z`,
-      { encoding: "utf-8", cwd, maxBuffer: 10 * 1024 * 1024 }
+      { encoding: "utf-8", cwd, maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS }
     );
 
     return parseGitLogDelimited(logOutput);
@@ -42,7 +46,8 @@ export function getRecentCommits(cwd: string, since: string = "1 week ago"): Git
       const format = "%H%n%an%n%aI%n%s%n%b";
       const logOutput = execSync(
         `git log --format="${format}" --name-only --since="${since}"`,
-        { encoding: "utf-8", cwd, maxBuffer: 10 * 1024 * 1024 }
+        { encoding: "utf-8", cwd, maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS }
       );
       return parseGitLogLegacy(logOutput);
     } catch {
@@ -60,7 +65,8 @@ export function getAllCommits(cwd: string): GitCommit[] {
   try {
     const logOutput = execSync(
       `git log --format="%H${FIELD_DELIM}%an${FIELD_DELIM}%aI${FIELD_DELIM}%s${FIELD_DELIM}%b" --name-only -z`,
-      { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024 }
+      { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS }
     );
 
     return parseGitLogDelimited(logOutput);
@@ -69,7 +75,8 @@ export function getAllCommits(cwd: string): GitCommit[] {
       const format = "%H%n%an%n%aI%n%s%n%b";
       const logOutput = execSync(
         `git log --format="${format}" --name-only`,
-        { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024 }
+        { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS }
       );
       return parseGitLogLegacy(logOutput);
     } catch {
@@ -91,7 +98,8 @@ export function getCommitsSince(cwd: string, sinceHash: string): GitCommit[] {
   try {
     const logOutput = execSync(
       `git log --format="%H${FIELD_DELIM}%an${FIELD_DELIM}%aI${FIELD_DELIM}%s${FIELD_DELIM}%b" --name-only -z ${validHash}..HEAD`,
-      { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024 }
+      { encoding: "utf-8", cwd, maxBuffer: 50 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS }
     );
 
     return parseGitLogDelimited(logOutput);
@@ -251,6 +259,7 @@ export function getCommitDiff(cwd: string, hash: string): string {
       encoding: "utf-8",
       cwd,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS,
     });
   } catch {
     return "";
@@ -268,6 +277,7 @@ export function getDiffBetween(cwd: string, from: string, to: string): string {
       encoding: "utf-8",
       cwd,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS,
     });
   } catch {
     return "";
@@ -289,6 +299,7 @@ export function getTrackedFiles(cwd: string): string[] {
       encoding: "utf-8",
       cwd,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS,
     });
     return output.trim().split("\n").filter(f => f.length > 0);
   } catch {
@@ -304,6 +315,7 @@ export function getCurrentBranch(cwd: string): string {
     return execSync("git rev-parse --abbrev-ref HEAD", {
       encoding: "utf-8",
       cwd,
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
   } catch {
     return "main";
@@ -318,6 +330,7 @@ export function getRepoRoot(cwd: string): string {
     return execSync("git rev-parse --show-toplevel", {
       encoding: "utf-8",
       cwd,
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
   } catch {
     return cwd;
@@ -332,6 +345,7 @@ export function getLatestHash(cwd: string): string {
     return execSync("git rev-parse HEAD", {
       encoding: "utf-8",
       cwd,
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
   } catch {
     return "";

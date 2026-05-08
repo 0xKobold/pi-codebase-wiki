@@ -65,7 +65,7 @@ import {
   getCurrentBranch,
   getLatestHash,
 } from "./core/git.js";
-import { scanFileTree } from "./core/indexer.js";
+import { scanFileTree, readReadme } from "./core/indexer.js";
 
 // ============================================================================
 // EXTENSION STATE
@@ -370,7 +370,87 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
 
         // Docs ingest — scan and update wiki pages from README/docs
         if (source === "docs" || source === "all") {
-          results.push("Docs: ingested documentation files");
+          const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+          const readme = readReadme(ctx.cwd);
+          let docsCreated = 0;
+          let docsUpdated = 0;
+
+          if (readme) {
+            const readmeSlug = "readme";
+            const existingPage = store.getPage(readmeSlug);
+            if (!existingPage) {
+              docsCreated++;
+            } else {
+              docsUpdated++;
+            }
+
+            const content = `# README Summary\n\n> **Summary**: Project README documentation.\n\n${readme.slice(0, 2000)}${readme.length > 2000 ? "\n\n... (truncated)" : ""}\n\n## See Also\n- [[index]]\n`;
+
+            const conceptDir = path.join(wikiPath, "concepts");
+            fs.mkdirSync(conceptDir, { recursive: true });
+            const readmePagePath = path.join(conceptDir, `${readmeSlug}.md`);
+            fs.writeFileSync(readmePagePath, content, "utf-8");
+
+            store.upsertPage({
+              id: readmeSlug,
+              path: `concepts/${readmeSlug}.md`,
+              type: "concept",
+              title: "README",
+              summary: readme.slice(0, 200).replace(/\n/g, " "),
+              sourceFiles: [],
+              sourceCommits: [],
+              lastIngested: new Date().toISOString(),
+              lastChecked: new Date().toISOString(),
+              inboundLinks: 0,
+              outboundLinks: 1,
+              stale: false,
+            });
+          }
+
+          // Scan for docs/ directory files
+          const docsDir = path.join(ctx.cwd, "docs");
+          if (fs.existsSync(docsDir)) {
+            try {
+              const docFiles = fs.readdirSync(docsDir).filter(f => f.endsWith(".md"));
+              for (const docFile of docFiles) {
+                const docPath = path.join(docsDir, docFile);
+                const docContent = fs.readFileSync(docPath, "utf-8");
+                const docSlug = toSlug(docFile.replace(/\.md$/, ""));
+                const existingDoc = store.getPage(docSlug);
+
+                if (!existingDoc) {
+                  docsCreated++;
+                } else {
+                  docsUpdated++;
+                }
+
+                const conceptDir2 = path.join(wikiPath, "concepts");
+                fs.mkdirSync(conceptDir2, { recursive: true });
+                const pagePath = path.join(conceptDir2, `${docSlug}.md`);
+                const pageContent = `# ${docFile.replace(/\.md$/, "")}\n\n> **Summary**: Documentation from \`${docFile}\`.\n\n${docContent.slice(0, 2000)}${docContent.length > 2000 ? "\n\n... (truncated)" : ""}\n\n## See Also\n- [[index]]\n`;
+                fs.writeFileSync(pagePath, pageContent, "utf-8");
+
+                store.upsertPage({
+                  id: docSlug,
+                  path: `concepts/${docSlug}.md`,
+                  type: "concept",
+                  title: docFile.replace(/\.md$/, ""),
+                  summary: docContent.slice(0, 200).replace(/\n/g, " "),
+                  sourceFiles: [`docs/${docFile}`],
+                  sourceCommits: [],
+                  lastIngested: new Date().toISOString(),
+                  lastChecked: new Date().toISOString(),
+                  inboundLinks: 0,
+                  outboundLinks: 1,
+                  stale: false,
+                });
+              }
+            } catch {
+              // Failed to read docs/ — skip
+            }
+          }
+
+          results.push(`Docs: ${docsCreated} created, ${docsUpdated} updated`);
         }
 
         return {
@@ -778,10 +858,12 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       details: Type.Optional(Type.String({ description: "Detailed description of the concept" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const name = (params as any).name as string;
-      const summary = (params as any).summary as string;
-      const appliesTo = ((params as any).applies_to as string[]) ?? [];
-      const details = (params as any).details as string | undefined;
+      const { name, summary, applies_to: appliesTo = [], details } = params as {
+        name: string;
+        summary: string;
+        applies_to?: string[];
+        details?: string;
+      };
 
       if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
         return { content: [{ type: "text", text: "Wiki not initialized. Run /wiki-init first." }], details: { success: false } };
@@ -1402,9 +1484,17 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       pageB: Type.Optional(Type.String({ description: "Second page ID (merge target or cross-ref partner)" })),
       newPageId: Type.Optional(Type.String({ description: "New page ID for split" })),
       newPageTitle: Type.Optional(Type.String({ description: "Title for the new split page" })),
+      sections: Type.Optional(Type.Array(Type.String(), { description: "Section titles to move to the new page when splitting" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { strategy, pageA, pageB, newPageId, newPageTitle } = params as any;
+      const { strategy, pageA, pageB, newPageId, newPageTitle, sections } = params as {
+        strategy: string;
+        pageA?: string;
+        pageB?: string;
+        newPageId?: string;
+        newPageTitle?: string;
+        sections?: string[];
+      };
 
       const store = await ensureInitialized(ctx);
       if (!store) {
@@ -1476,7 +1566,15 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       }
 
       const title = newPageTitle || newPageId;
-      const result = splitPage(wikiPath, store, pageA, newPageId, title, () => false);
+      // Build a section filter from the user-specified sections (case-insensitive match)
+      const sectionFilter = (sectionTitle: string) => {
+        if (sections && sections.length > 0) {
+          return sections.some(s => sectionTitle.toLowerCase().includes(s.toLowerCase()));
+        }
+        // No sections specified — move all sections after the title
+        return true;
+      };
+      const result = splitPage(wikiPath, store, pageA, newPageId, title, sectionFilter);
       commitWiki(wikiPath, store, "wiki: split page");
 
       return {

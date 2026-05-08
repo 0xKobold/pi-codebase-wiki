@@ -14,6 +14,7 @@ import type { SourceManifest, SourceType, PageTypeConfig } from "../shared.js";
 import { DEFAULT_PAGE_TYPES, getDirectoryForPageType, toSlug, formatWikiDate } from "../shared.js";
 import type { WikiStore } from "../core/store.js";
 import { serializeFrontmatter, stripFrontmatter } from "../core/frontmatter.js";
+import { appendToLog, type LogEntry } from "./log.js";
 
 // ============================================================================
 // TYPES
@@ -200,7 +201,16 @@ export function ingestSource(
     store.addSource(manifest);
 
     // Append to structured log
-    appendSourceToLog(wikiPath, manifest, result);
+    const entry: LogEntry = {
+      timestamp: manifest.ingestedAt,
+      type: "ingest",
+      source: manifest.type,
+      title: manifest.title,
+      sourceManifestId: manifest.id,
+      pagesCreated: result.pagesCreated,
+      pagesUpdated: result.pagesUpdated,
+    };
+    appendToLog(wikiPath, entry);
 
   } catch (err) {
     result.errors.push(`Source ingestion failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -232,6 +242,18 @@ export async function ingestUrl(
     errors: [],
   };
 
+  // Validate URL before fetching
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      throw new Error(`Unsupported URL protocol: ${parsedUrl.protocol}. Only http: and https: are allowed.`);
+    }
+  } catch (err) {
+    result.errors.push(`Invalid URL: ${err instanceof Error ? err.message : String(err)}`);
+    return result;
+  }
+
   try {
     // Fetch the URL content
     let content: string;
@@ -244,11 +266,11 @@ export async function ingestUrl(
       }
       const html = await response.text();
       content = extractReadableContent(html);
-      pageTitle = options.title || extractTitle(html) || new URL(url).hostname;
+      pageTitle = options.title || extractTitle(html) || parsedUrl.hostname;
     } catch (fetchErr) {
       // If fetch fails, create a stub source with the URL reference
       content = `[Source URL](${url})\n\nContent could not be fetched.\nURL: ${url}\nFetched: ${new Date().toISOString()}`;
-      pageTitle = options.title || new URL(url).hostname;
+      pageTitle = options.title || parsedUrl.hostname;
     }
 
     result.title = pageTitle;
@@ -451,44 +473,7 @@ function inferPageTypeFromSource(sourceType: SourceType): string {
 }
 
 // ============================================================================
-// STRUCTURED LOG
-// ============================================================================
-// STRUCTURED LOG — Re-exports from central log module
-// ============================================================================
-
-export type { LogEntry } from "./log.js";
-
-/**
- * Append a source ingestion entry to the structured LOG.md
- */
-function appendSourceToLog(
-  wikiPath: string,
-  manifest: SourceManifest,
-  result: IngestSourceResult
-): void {
-  // Import dynamically to avoid circular dependency at module level
-  const { appendToLog } = require("./log.js") as typeof import("./log.js");
-  const entry: import("./log.js").LogEntry = {
-    timestamp: manifest.ingestedAt,
-    type: "ingest",
-    source: manifest.type,
-    title: manifest.title,
-    sourceManifestId: manifest.id,
-    pagesCreated: result.pagesCreated,
-    pagesUpdated: result.pagesUpdated,
-  };
-
-  appendToLog(wikiPath, entry);
-}
-
-// ============================================================================
-
-/**
- * Append a structured log entry to LOG.md
- */
-
-// (Log functions centralized in ./log.ts — import from there)
-
+// GIT SOURCE MANIFEST
 // ============================================================================
 
 /**
