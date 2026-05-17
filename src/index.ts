@@ -77,6 +77,8 @@ interface ExtensionState {
   config: WikiConfig;
   rootDir: string;
   initialized: boolean;
+  notionSyncer: NotionSyncer | null;
+  notionToken: string | null;
 }
 
 function createState(): ExtensionState {
@@ -85,6 +87,8 @@ function createState(): ExtensionState {
     config: DEFAULT_WIKI_CONFIG,
     rootDir: process.cwd(),
     initialized: false,
+    notionSyncer: null,
+    notionToken: null,
   };
 }
 
@@ -145,6 +149,17 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
     }
 
     return state.store;
+  }
+
+  /** Get or create a NotionSyncer instance (cached across calls) */
+  function getNotionSyncer(token: string, config: import("./shared.js").NotionSyncConfig, configPath: string, dryRun: boolean): NotionSyncer {
+    // Reuse existing instance if token matches
+    if (state.notionSyncer && state.notionToken === token) {
+      return state.notionSyncer;
+    }
+    state.notionSyncer = new NotionSyncer(token, config, configPath, dryRun);
+    state.notionToken = token;
+    return state.notionSyncer;
   }
 
   // ─── Helper: update index and auto-commit wiki changes ────────────────
@@ -1868,7 +1883,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         syncDirection: direction as "export" | "import" | "bidirectional",
       };
 
-      const syncer = new NotionSyncer(notionToken, effectiveConfig, configPath, dryRun);
+      const syncer = getNotionSyncer(notionToken, effectiveConfig, configPath, dryRun);
 
       // Get pages from store
       const allPages = store.getAllPages();

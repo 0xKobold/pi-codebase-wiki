@@ -1,6 +1,6 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
-  "version": "0.8.4",
+  "version": "0.8.6",
   "type": "module",
   "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
   "keywords": [
@@ -39,12 +39,12 @@
     ]
   },
   "dependencies": {
-    "@moikapy/kapy": "0.3.0",
+    "@moikapy/kapy": "0.3.1",
     "@notionhq/client": "^5.21.0",
     "sql.js": "^1.14.1"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.71.1",
+    "@earendil-works/pi-coding-agent": "^0.75.0",
     "@sinclair/typebox": "^0.34.49"
   },
   "scripts": {
@@ -55,7 +55,7 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "bun-types": "^1.3.13",
+    "bun-types": "^1.3.14",
     "typescript": "^6.0.3"
   }
 }
