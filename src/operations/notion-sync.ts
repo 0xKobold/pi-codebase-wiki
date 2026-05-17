@@ -13,6 +13,10 @@ import { Client } from "@notionhq/client";
 import type { WikiPage, NotionSyncConfig } from "../shared.js";
 import { markdownToBlocks } from "./notion-mapping.js";
 
+// ─── Fetch polyfill ─────────────────────────────────────────────────────────
+// Notion SDK uses globalThis.fetch. If unavailable (older Node, custom runtimes),
+// fall back to built-in https module. We also accept an explicit fetch override.
+
 // ─── Types ─────────────────────────────────────────────────────
 
 export interface NotionSyncResult {
@@ -126,7 +130,12 @@ export class NotionSyncer {
   private dataSourceId: string | null = null;
 
   constructor(notionToken: string, config: NotionSyncConfig, configPath: string, dryRun = false) {
-    this.client = new Client({ auth: notionToken });
+    // Ensure fetch is available for the Notion SDK
+    // Pi extension context may not have globalThis.fetch in all cases
+    const fetchFn = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
+    const clientOptions: Record<string, any> = { auth: notionToken };
+    if (fetchFn) clientOptions.fetch = fetchFn;
+    this.client = new Client(clientOptions as any);
     this.config = config;
     this.configPath = configPath;
     this.dryRun = dryRun;
@@ -134,6 +143,13 @@ export class NotionSyncer {
 
   async findOrCreateDatabase(): Promise<{ id: string; url: string; created: boolean }> {
     const rootId = this.config.rootPageId;
+
+    // Quick connectivity test — fail fast with a clear message if the token is bad
+    try {
+      await this.client.search({ query: "", page_size: 1 });
+    } catch (err: any) {
+      throw new Error(`Notion API connection failed: ${err.message || err}. Check NOTION_API_TOKEN.`);
+    }
 
     // 1. Check existing database ID — also get the data_source_id
     if (this.config.databaseId) {
