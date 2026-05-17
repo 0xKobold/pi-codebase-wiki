@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "ctx_batch_execute",
+      "wiki_notion_sync"
+    ],
+    "deny": [],
+    "ask": [],
+    "denyPaths": [],
+    "additionalDirectories": []
+  }
+}

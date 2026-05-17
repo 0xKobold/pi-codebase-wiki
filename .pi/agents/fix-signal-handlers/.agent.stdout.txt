@@ -1,0 +1,1 @@
+Fix is verified and clean. `close()` now only removes the handler this store registered — no more nuking other extensions' listeners.

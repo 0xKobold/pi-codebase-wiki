@@ -122,11 +122,13 @@ export class NotionSyncer {
       return { id: "[dry-run]", url: "[dry-run]", created: true };
     }
 
-    // 3. Create new database
+    // 3. Create new database with initial_data_source (Notion API v5)
     const newDb = await this.client.databases.create({
       parent: { type: "page_id", page_id: rootId },
       title: [{ type: "text", text: { content: this.config.databaseName } }],
-      properties: buildDatabaseProperties(),
+      initial_data_source: {
+        properties: buildDatabaseProperties(),
+      },
     } as any);
 
     this.config.databaseId = newDb.id;
@@ -168,26 +170,24 @@ export class NotionSyncer {
   }
 
   private async findExistingPage(databaseId: string, page: WikiPage): Promise<string | null> {
+    // Use search API (works across API versions) to find pages in this database
     try {
-      // Query via data sources API (v5)
-      const response = await (this.client as any).dataSources.query({
-        data_source_id: databaseId,
-        filter: { property: "Wiki Path", url: { equals: page.id } },
+      const response = await this.client.search({
+        query: page.title,
+        filter: { property: "object", value: "page" },
+        page_size: 5,
       });
-      if (response.results?.length > 0) return response.results[0].id;
-    } catch {
-      // Fallback: try pages search by title
-      try {
-        const response = await this.client.search({
-          query: page.title,
-          filter: { property: "object", value: "page" },
-        });
-        const found = response.results.find((r: any) =>
-          "properties" in r && r.properties.Name?.title?.[0]?.plain_text === page.title
-        );
-        if (found) return found.id;
-      } catch { /* not found */ }
-    }
+      // Find a page that belongs to our database and matches the title or wiki path
+      for (const result of response.results) {
+        if (!("properties" in result)) continue;
+        const props = (result as any).properties;
+        const titleText = props?.Name?.title?.[0]?.plain_text ?? props?.title?.title?.[0]?.plain_text;
+        const wikiPath = props?.["Wiki Path"]?.url;
+        if (titleText === page.title || wikiPath === page.id || wikiPath === page.path) {
+          return result.id;
+        }
+      }
+    } catch { /* search might fail for new databases */ }
     return null;
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@0xkobold/pi-codebase-wiki",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
   "description": "Keeps a wiki for your code that updates itself — reads your git history and docs so you can ask questions about your codebase",
   "keywords": [

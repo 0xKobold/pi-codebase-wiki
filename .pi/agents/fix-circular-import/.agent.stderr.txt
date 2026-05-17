@@ -1,0 +1,16 @@
+[pi-ollama] State initialized: baseUrl=http://localhost:11434, cloudUrl=https://ollama.com, hasApiKey=false
+[pi-ollama] Extension loaded
+[pi-kobold] Meta-extension loading — registering kobold-specific tools
+[pi-kobold] Git sync tools registered (7 tools)
+[pi-kobold] Extension loaded — kobold tools registered (sub-extensions loaded by pi)
+[pi-orchestration] Loaded - tools: orchestrate, register_agent, orchestrate_status
+[pi-gateway] Hermes-style gateway extension loaded
+[pi-ollama] State initialized: baseUrl=http://localhost:11434, cloudUrl=https://ollama.com, hasApiKey=false
+[pi-ollama] Extension loaded
+[MCP] Extension loaded - Model Context Protocol integration ready
+[pi-secret-guardian] Extension loaded — 4 tools + 2 commands registered
+[pi-persona] Loading persona extension...
+[pi-persona] Extension loaded — 1 tool, 3 commands registered
+[pi-web] Extension loaded — tools: pi_web_fetch, pi_web_search, pi_web_research
+[pi-task] Extension loaded — Kanban task management ready
+[CodebaseWiki] Extension loaded — /wiki, /wiki-init, /wiki-ingest, /wiki-lint, /wiki-query, /wiki-reindex
