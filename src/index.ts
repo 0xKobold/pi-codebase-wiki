@@ -59,6 +59,7 @@ import {
   ingestSource as ingestSourceOp,
   ingestUrl as ingestUrlOp,
 } from "./operations/source.js";
+import { NotionSyncer, loadSyncConfig, saveSyncConfig } from "./operations/notion-sync.js";
 import {
   getRecentCommits,
   getAllCommits,
@@ -1836,7 +1837,9 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
       const configPath = path.join(wikiPath, "meta", "wiki-sync.config.json");
 
-      const { NotionSyncer, loadSyncConfig, saveSyncConfig } = await import("./operations/notion-sync.js");
+      // Statically imported at top of file — NoionSyncer, loadSyncConfig, saveSyncConfig
+      // (was dynamic import, caused null.exec on second call in pi extension context)
+      // const { NotionSyncer, loadSyncConfig, saveSyncConfig } = await import("./operations/notion-sync.js");
       const syncConfig = loadSyncConfig(configPath);
 
       // Resolve root page ID: arg > config > env > ~/.env.notion
@@ -1959,7 +1962,8 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
       const configPath = path.join(wikiPath, "meta", "wiki-sync.config.json");
 
-      const { loadSyncConfig } = await import("./operations/notion-sync.js");
+      // Statically imported at top of file
+      // const { loadSyncConfig } = await import("./operations/notion-sync.js");
       const config = loadSyncConfig(configPath);
 
       const store = await ensureInitialized(ctx);
