@@ -30,3 +30,4 @@ coverage/
 
 # Pi agent sessions
 .pi/.env
+.env

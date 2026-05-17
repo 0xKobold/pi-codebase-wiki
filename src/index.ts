@@ -1812,9 +1812,20 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         return { content: [{ type: "text", text: "❌ No wiki found. Run /wiki-init first." }], details: { success: false, reason: "not_initialized" } };
       }
 
-      const notionToken = process.env.NOTION_API_TOKEN;
+      let notionToken = process.env.NOTION_API_TOKEN;
       if (!notionToken) {
-        return { content: [{ type: "text", text: "❌ NOTION_API_TOKEN not set. Add it to your environment." }], details: { success: false, reason: "no_token" } };
+        // Fallback: read from ~/.env.notion (same convention as ntn CLI)
+        try {
+          const envPath = path.join(process.env.HOME || process.env.USERPROFILE || "/tmp", ".env.notion");
+          if (fs.existsSync(envPath)) {
+            const envContent = fs.readFileSync(envPath, "utf-8");
+            const match = envContent.match(/NOTION_API_TOKEN=(.+)/);
+            if (match) notionToken = match[1].trim();
+          }
+        } catch { /* ignore */ }
+      }
+      if (!notionToken) {
+        return { content: [{ type: "text", text: "❌ NOTION_API_TOKEN not set. Set it in environment or ~/.env.notion" }], details: { success: false, reason: "no_token" } };
       }
 
       const store = await ensureInitialized(ctx);
@@ -1828,18 +1839,31 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
       const { NotionSyncer, loadSyncConfig, saveSyncConfig } = await import("./operations/notion-sync.js");
       const syncConfig = loadSyncConfig(configPath);
 
+      // Resolve root page ID: arg > config > env > ~/.env.notion
+      let rootPageIdResolved = rootPageId || syncConfig.rootPageId || process.env.NOTION_ROOT_PAGE_ID;
+      if (!rootPageIdResolved) {
+        try {
+          const envPath = path.join(process.env.HOME || process.env.USERPROFILE || "/tmp", ".env.notion");
+          if (fs.existsSync(envPath)) {
+            const envContent = fs.readFileSync(envPath, "utf-8");
+            const match = envContent.match(/NOTION_ROOT_PAGE_ID=(.+)/);
+            if (match) rootPageIdResolved = match[1].trim();
+          }
+        } catch { /* ignore */ }
+      }
+
+      if (!rootPageIdResolved) {
+        return { content: [{ type: "text", text: "❌ No root page ID. Set NOTION_ROOT_PAGE_ID env var, ~/.env.notion, or pass rootPageId arg." }], details: { success: false, reason: "no_root_page" } };
+      }
+
       // Merge config with args (flat structure)
       const effectiveConfig: import("./shared.js").NotionSyncConfig = {
         ...syncConfig,
-        rootPageId: rootPageId || syncConfig.rootPageId || process.env.NOTION_ROOT_PAGE_ID || "",
+        rootPageId: rootPageIdResolved,
         databaseId: databaseId || syncConfig.databaseId,
         databaseName: syncConfig.databaseName || `${state.config.domain || "codebase"} Wiki`,
         syncDirection: direction as "export" | "import" | "bidirectional",
       };
-
-      if (!effectiveConfig.rootPageId) {
-        return { content: [{ type: "text", text: "❌ No root page ID. Set NOTION_ROOT_PAGE_ID env var or pass rootPageId arg." }], details: { success: false, reason: "no_root_page" } };
-      }
 
       const syncer = new NotionSyncer(notionToken, effectiveConfig, configPath, dryRun);
 
@@ -1867,7 +1891,7 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           `Direction: ${direction}`,
           `Pages to sync: ${filteredPages.length}`,
           `Database: ${effectiveConfig.databaseId || "(will create)"}`,
-          `Root page: ${effectiveConfig.rootPageId}`,
+          `Root page: ${rootPageIdResolved}`,
           "",
           "**Pages:**",
         ];
