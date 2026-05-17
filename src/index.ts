@@ -1919,7 +1919,6 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         if (filteredPages.length > 20) {
           lines.push(`- ... and ${filteredPages.length - 20} more`);
         }
-        store.close();
         return { content: [{ type: "text", text: lines.join("\n") }], details: { success: true, dryRun: true, pages: filteredPages.length } };
       }
 
@@ -1949,11 +1948,9 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
           }
         }
 
-        store.close();
         return { content: [{ type: "text", text: lines.join("\n") }], details: { success: true, synced: result.synced, created: result.created, updated: result.updated } };
       } catch (error) {
-        store.close();
-        const msg = error instanceof Error ? error.message : String(error);
+        const msg = error instanceof Error ? `${error.message}\nStack: ${error.stack?.substring(0, 500)}` : String(error);
         return { content: [{ type: "text", text: `❌ Sync failed: ${msg}` }], details: { success: false, reason: "sync_error", error: msg } };
       }
     },
@@ -2010,7 +2007,6 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
         `Fresh Pages: ${allPages.length - staleCount}`,
       ];
 
-      store.close();
       return { content: [{ type: "text", text: lines.join("\n") }], details: { success: true } };
     },
   });
