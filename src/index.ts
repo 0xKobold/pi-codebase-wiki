@@ -28,7 +28,7 @@ import {
   getWikiPath,
   ensureWikiDirs,
 } from "./core/config.js";
-import type { WikiConfig, GitCommit, LintResult, SourceType, PageTypeConfig, IngestionMode, IngestionThresholds } from "./shared.js";
+import type { WikiConfig, WikiPage, GitCommit, LintResult, SourceType, PageTypeConfig, IngestionMode, IngestionThresholds } from "./shared.js";
 import { DEFAULT_WIKI_CONFIG, DEFAULT_PAGE_TYPES, toSlug, formatWikiDate, validateSlug, getDirectoryForPageType } from "./shared.js";
 import {
   initWiki,
@@ -1778,5 +1778,199 @@ export default async function codebaseWikiExtension(pi: ExtensionAPI): Promise<v
     },
   });
 
-  console.log("[CodebaseWiki] Extension loaded — /wiki, /wiki-init, /wiki-ingest, /wiki-lint, /wiki-query, /wiki-reindex, /wiki-sources");
+  // ─── wiki_notion_sync ──────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_notion_sync",
+    label: "Wiki Notion Sync",
+    description: "Export wiki pages to a Notion database. Creates a per-project database under a root page with Kanban views for page lifecycle, ADR pipeline, and ingestion health.",
+    promptSnippet: "Sync wiki pages to Notion",
+    promptGuidelines: [
+      "Set NOTION_API_TOKEN and NOTION_ROOT_PAGE_ID before syncing",
+      "Use dryRun first to preview what will be synced",
+      "Creates a database automatically on first sync",
+    ],
+    parameters: Type.Object({
+      direction: Type.Optional(Type.Union([
+        Type.Literal("export"),
+        Type.Literal("import"),
+        Type.Literal("bidirectional"),
+      ], { description: "Sync direction. Default: export (wiki → Notion)" })),
+      rootPageId: Type.Optional(Type.String({ description: "Notion root page ID. Falls back to NOTION_ROOT_PAGE_ID env" })),
+      databaseId: Type.Optional(Type.String({ description: "Existing Notion database ID. Creates one if omitted" })),
+      createDb: Type.Optional(Type.Boolean({ description: "Create database if not found. Default: true" })),
+      pageTypes: Type.Optional(Type.Array(Type.String(), { description: "Filter which page types to sync" })),
+      force: Type.Optional(Type.Boolean({ description: "Re-sync even if unchanged. Default: false" })),
+      dryRun: Type.Optional(Type.Boolean({ description: "Preview without writing. Default: false" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { direction = "export", rootPageId, databaseId, createDb = true, pageTypes, force = false, dryRun = false } = params as {
+        direction?: string; rootPageId?: string; databaseId?: string;
+        createDb?: boolean; pageTypes?: string[]; force?: boolean; dryRun?: boolean;
+      };
+
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        return { content: [{ type: "text", text: "❌ No wiki found. Run /wiki-init first." }], details: { success: false, reason: "not_initialized" } };
+      }
+
+      const notionToken = process.env.NOTION_API_TOKEN;
+      if (!notionToken) {
+        return { content: [{ type: "text", text: "❌ NOTION_API_TOKEN not set. Add it to your environment." }], details: { success: false, reason: "no_token" } };
+      }
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "❌ Failed to initialize wiki store." }], details: { success: false, reason: "store_error" } };
+      }
+
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+      const configPath = path.join(wikiPath, "meta", "wiki-sync.config.json");
+
+      const { NotionSyncer, loadSyncConfig, saveSyncConfig } = await import("./operations/notion-sync.js");
+      const syncConfig = loadSyncConfig(configPath);
+
+      // Merge config with args (flat structure)
+      const effectiveConfig: import("./shared.js").NotionSyncConfig = {
+        ...syncConfig,
+        rootPageId: rootPageId || syncConfig.rootPageId || process.env.NOTION_ROOT_PAGE_ID || "",
+        databaseId: databaseId || syncConfig.databaseId,
+        databaseName: syncConfig.databaseName || `${state.config.domain || "codebase"} Wiki`,
+        syncDirection: direction as "export" | "import" | "bidirectional",
+      };
+
+      if (!effectiveConfig.rootPageId) {
+        return { content: [{ type: "text", text: "❌ No root page ID. Set NOTION_ROOT_PAGE_ID env var or pass rootPageId arg." }], details: { success: false, reason: "no_root_page" } };
+      }
+
+      const syncer = new NotionSyncer(notionToken, effectiveConfig, configPath, dryRun);
+
+      // Get pages from store
+      const allPages = store.getAllPages();
+      const filteredPages = pageTypes
+        ? allPages.filter((p: WikiPage) => pageTypes.includes(p.type))
+        : allPages;
+
+      // Read page contents from disk
+      const pageContents = new Map<string, string>();
+      for (const page of filteredPages) {
+        const pagePath = path.join(wikiPath, page.path);
+        try {
+          pageContents.set(page.id, fs.readFileSync(pagePath, "utf-8"));
+        } catch {
+          pageContents.set(page.id, page.summary || "");
+        }
+      }
+
+      if (dryRun) {
+        const lines = [
+          `🔍 **Dry Run — Notion Sync Preview**`,
+          "",
+          `Direction: ${direction}`,
+          `Pages to sync: ${filteredPages.length}`,
+          `Database: ${effectiveConfig.databaseId || "(will create)"}`,
+          `Root page: ${effectiveConfig.rootPageId}`,
+          "",
+          "**Pages:**",
+        ];
+        for (const page of filteredPages.slice(0, 20)) {
+          lines.push(`- ${page.type}/${page.id} — ${page.stale ? "⚠️ stale" : "✅ fresh"} (${page.inboundLinks}→in, ${page.outboundLinks}→out)`);
+        }
+        if (filteredPages.length > 20) {
+          lines.push(`- ... and ${filteredPages.length - 20} more`);
+        }
+        store.close();
+        return { content: [{ type: "text", text: lines.join("\n") }], details: { success: true, dryRun: true, pages: filteredPages.length } };
+      }
+
+      try {
+        const result = await syncer.exportPages(filteredPages, pageContents, effectiveConfig.databaseId ?? undefined);
+        saveSyncConfig(configPath, effectiveConfig);
+
+        const lines = [
+          `✅ **Notion Sync Complete**`,
+          "",
+          `Database: ${result.databaseId}`,
+          `URL: ${result.databaseUrl}`,
+          "",
+          `Synced: ${result.synced}`,
+          `Created: ${result.created}`,
+          `Updated: ${result.updated}`,
+          `Skipped: ${result.skipped}`,
+        ];
+
+        if (result.errors.length > 0) {
+          lines.push("", `⚠️ **Errors (${result.errors.length}):**`);
+          for (const err of result.errors.slice(0, 5)) {
+            lines.push(`- ${err.pageId}: ${err.error}`);
+          }
+          if (result.errors.length > 5) {
+            lines.push(`- ... and ${result.errors.length - 5} more`);
+          }
+        }
+
+        store.close();
+        return { content: [{ type: "text", text: lines.join("\n") }], details: { success: true, synced: result.synced, created: result.created, updated: result.updated } };
+      } catch (error) {
+        store.close();
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text", text: `❌ Sync failed: ${msg}` }], details: { success: false, reason: "sync_error", error: msg } };
+      }
+    },
+  });
+
+  // ─── wiki_notion_status ────────────────────────────────────────────────
+  pi.registerTool({
+    name: "wiki_notion_status",
+    label: "Wiki Notion Status",
+    description: "Show Notion sync status: last sync time, pages synced, database ID, and pending changes.",
+    promptSnippet: "Check Notion sync status",
+    promptGuidelines: [
+      "Shows sync history and wiki health overview",
+    ],
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      if (!wikiExists(ctx.cwd, state.config.wikiDir)) {
+        return { content: [{ type: "text", text: "❌ No wiki found. Run /wiki-init first." }], details: { success: false, reason: "not_initialized" } };
+      }
+
+      const wikiPath = getWikiPath(ctx.cwd, state.config.wikiDir);
+      const configPath = path.join(wikiPath, "meta", "wiki-sync.config.json");
+
+      const { loadSyncConfig } = await import("./operations/notion-sync.js");
+      const config = loadSyncConfig(configPath);
+
+      const store = await ensureInitialized(ctx);
+      if (!store) {
+        return { content: [{ type: "text", text: "❌ Failed to initialize wiki store." }], details: { success: false, reason: "store_error" } };
+      }
+
+      const allPages = store.getAllPages();
+      const staleCount = allPages.filter((p: WikiPage) => p.stale).length;
+
+      const lines = [
+        "📊 **Notion Sync Status**",
+        "",
+        `**Database ID:** ${config.databaseId || "(not created yet)"}`,
+        `**Database Name:** ${config.databaseName}`,
+        `**Root Page ID:** ${config.rootPageId || process.env.NOTION_ROOT_PAGE_ID || "(not set)"}`,
+        `**Direction:** ${config.syncDirection}`,
+        `**Conflict Resolution:** ${config.conflictResolution}`,
+        "",
+        "**Sync History:**",
+        `Last Sync: ${config.lastSyncAt || "never"}`,
+        `Total Synced: ${config.pagesSynced}`,
+        `Created: ${config.pagesCreated}`,
+        `Updated: ${config.pagesUpdated}`,
+        "",
+        "**Wiki State:**",
+        `Total Pages: ${allPages.length}`,
+        `Stale Pages: ${staleCount}`,
+        `Fresh Pages: ${allPages.length - staleCount}`,
+      ];
+
+      store.close();
+      return { content: [{ type: "text", text: lines.join("\n") }], details: { success: true } };
+    },
+  });
+
+  console.log("[CodebaseWiki] Extension loaded — /wiki, /wiki-init, /wiki-ingest, /wiki-lint, /wiki-query, /wiki-reindex, /wiki-sources, wiki_notion_sync, wiki_notion_status");
 }

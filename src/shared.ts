@@ -169,6 +169,22 @@ export interface IngestionThresholds {
 }
 
 /** Extension configuration */
+export interface NotionSyncConfig {
+  version: number;
+  rootPageId: string;            // Notion root page ID for per-project databases
+  databaseId: string | null;     // Created database ID (null before first sync)
+  databaseName: string;          // e.g. "pi-codebase-wiki Wiki"
+  syncDirection: "export" | "import" | "bidirectional";
+  conflictResolution: "wiki-wins" | "notion-wins" | "newest-wins";
+  pageTypes: Record<string, { notionIcon: string; notionStatus: string }>;
+  fieldMapping: Record<string, string>;
+  lastSyncAt: string | null;
+  lastSyncHash: string | null;
+  pagesSynced: number;
+  pagesCreated: number;
+  pagesUpdated: number;
+}
+
 export interface WikiConfig {
   autoIngest: boolean;            // default: false
   ingestOnStart: boolean;         // default: false
@@ -182,6 +198,7 @@ export interface WikiConfig {
   pageTypes: PageTypeConfig[];   // default: DEFAULT_PAGE_TYPES
   ingestionMode: IngestionMode;  // default: "auto"
   ingestionThresholds: IngestionThresholds; // default: auto (no confirmations)
+  notion?: NotionSyncConfig;       // optional Notion sync configuration
 }
 
 /** Git commit info */
