@@ -105,11 +105,50 @@ const issues = lintWiki(wikiPath, store);
 ┌─────────────────────────────────────┐
 │  Layer 1: Raw Sources (IMMUTABLE)  │  git log, source files, configs
 ├─────────────────────────────────────┤
-│  Layer 2: The Wiki (LLM-OWNED)      │  .codebase-wiki/ — markdown pages
+│  Layer 2: The Wiki (LLM-OWNED)    │  .codebase-wiki/ — markdown pages
 ├─────────────────────────────────────┤
-│  Layer 3: Schema (CO-EVOLVING)      │  .codebase-wiki/SCHEMA.md
+│  Layer 3: Schema (CO-EVOLVING)     │  .codebase-wiki/SCHEMA.md
 └─────────────────────────────────────┘
 ```
+
+## Notion Sync 📤
+
+Export wiki pages to Notion databases with zero-config Kanban boards. The wiki is the source of truth — Notion is the readable interface.
+
+### Setup
+
+1. Create a Notion integration at [notion.so/my-integrations](https://www.notion.so/my-integrations)
+2. Copy the API token and share a root Notion page with the integration
+3. Set credentials (either env vars or `~/.env.notion`):
+
+```bash
+# Option A: Environment variables
+export NOTION_API_TOKEN="ntn_your_token"
+export NOTION_ROOT_PAGE_ID="your-root-page-id"
+
+# Option B: ~/.env.notion (auto-detected)
+NOTION_API_TOKEN=ntn_your_token
+NOTION_ROOT_PAGE_ID=your-root-page-id
+```
+
+### Usage
+
+```
+wiki_notion_sync          # Export all wiki pages to Notion
+wiki_notion_sync({"dryRun": true})  # Preview without writing
+wiki_notion_status        # Show sync status and history
+```
+
+### How It Works
+
+- **Per-project databases**: Each project gets its own Notion database under the root page
+- **Automatic Kanban boards**: Three board views are created — Page Lifecycle (by Status), ADR Pipeline (by ADR Status), Ingestion Health (by Ingest Status)
+- **Incremental sync**: Only changed pages are updated on subsequent syncs
+- **Wiki is source of truth**: Export direction only (for now) — wiki edits always win
+
+### Notion API v5
+
+Uses Notion's v5 API with `initial_data_source` for database creation and `data_source_id` for page creation. `Status` properties use `select` type (not `status`) for simpler API compatibility while still enabling Kanban board views.
 
 ## Quick Start
 
@@ -155,6 +194,8 @@ wiki ingest all
 | `wiki_concept` | Create or update a concept page |
 | `wiki_changelog` | Generate changelog from recent commits |
 | `wiki_evolve` | Trace how a feature changed over time |
+| `wiki_notion_sync` | Export wiki pages to Notion databases |
+| `wiki_notion_status` | Show Notion sync status and history |
 
 ## pi Commands
 
@@ -193,6 +234,7 @@ wiki ingest all
 └── meta/
     ├── LOG.md           # Ingest log
     ├── STATS.md         # Wiki health stats
+    ├── wiki-sync.config.json  # Notion sync state
     └── wiki.db          # SQLite metadata (sql.js)
 ```
 
